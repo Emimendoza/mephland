@@ -15,7 +15,7 @@ namespace mland {
 		vkr::PhysicalDevice pDev{nullptr};
 		vkr::Device dev{nullptr};
 		DRM_Device drmDev;
-		map<uint32_t, vkr::CommandPool> cmdPools{};
+		map<uint32_t, std::mutex> queueMutexes{};
 		map<uint32_t, vkr::Queue> queues{};
 		vkr::ShaderModule vertShader{nullptr};
 		vkr::ShaderModule fragShader{nullptr};
@@ -31,7 +31,11 @@ namespace mland {
 		VDevice(const VDevice&) = delete;
 		~VDevice() = default;
 
-		vkr::CommandBuffer createCommandBuffer(uint32_t queueFamilyIndex);
+		vkr::CommandPool createCommandPool(uint32_t queueFamilyIndex);
+		vkr::CommandBuffer createCommandBuffer(uint32_t queueFamilyIndex, const vkr::CommandPool& pool);
+
+		void submit(uint32_t queueFamilyIndex, const vk::SubmitInfo& submitInfo, const vkr::Fence& fence);
+		vk::Result present(uint32_t queueFamilyIndex, const vk::PresentInfoKHR& presentInfo);
 
 		opt<VDisplay> getDRMDisplay(uint32_t connectorId);
 		opt<vkr::ShaderModule> createShaderModule(const VShader& shader);

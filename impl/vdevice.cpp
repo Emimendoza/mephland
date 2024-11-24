@@ -40,9 +40,9 @@ opt<VDisplay> VDevice::getDRMDisplay(const uint32_t connectorId) {
 	return std::make_optional(std::move(display));
 }
 
-vkr::CommandBuffer VDevice::createCommandBuffer(const uint32_t queueFamilyIndex) {
+vkr::CommandBuffer VDevice::createCommandBuffer(uint32_t queueFamilyIndex, const vkr::CommandPool& pool) {
 	const vk::CommandBufferAllocateInfo cmdBufferAllocInfo{
-		.commandPool = cmdPools.at(queueFamilyIndex),
+		.commandPool = pool,
 		.level = vk::CommandBufferLevel::ePrimary,
 		.commandBufferCount = 1
 	};
@@ -97,3 +97,29 @@ opt<vkr::ShaderModule> VDevice::createShaderModule(const VShader& shader) {
 	MDEBUG << name << " Created shader module" << endl;
 	return std::make_optional(std::move(res.value()));
 }
+
+vkr::CommandPool VDevice::createCommandPool(uint32_t queueFamilyIndex) {
+	const vk::CommandPoolCreateInfo cmdPoolCreateInfo{
+		.flags = vk::CommandPoolCreateFlagBits::eResetCommandBuffer,
+		.queueFamilyIndex = queueFamilyIndex
+	};
+	auto cmdRes = dev.createCommandPool(cmdPoolCreateInfo);
+	if (!cmdRes.has_value()) [[unlikely]]{
+		throw std::runtime_error(name + " Failed to create command pool: " + to_str(cmdRes.error()));
+	}
+	MDEBUG << name << " Created command pool" << endl;
+	return std::move(cmdRes.value());
+}
+
+void VDevice::submit(const uint32_t queueFamilyIndex, const vk::SubmitInfo& submitInfo, const vkr::Fence& fence) {
+	std::lock_guard lock(queueMutexes[queueFamilyIndex]);
+	const auto& queue = queues.at(queueFamilyIndex);
+	queue.submit(submitInfo, fence);
+}
+
+vk::Result VDevice::present(const uint32_t queueFamilyIndex, const vk::PresentInfoKHR& presentInfo) {
+	std::lock_guard lock(queueMutexes[queueFamilyIndex]);
+	const auto& queue = queues.at(queueFamilyIndex);
+	return queue.presentKHR(presentInfo);
+}
+

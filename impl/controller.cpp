@@ -1,3 +1,5 @@
+#include <csignal>
+
 #include "controller.h"
 #include "vinstance.h"
 #include "vdisplay.h"
@@ -18,11 +20,24 @@ Controller::~Controller() {
 	MDEBUG << "Controller destroyed" << endl;
 }
 
+static volatile bool running = true;
+
+static void signal_handler(int signal) {
+	running = false;
+}
+
 void Controller::run() {
 	MDEBUG << "Running controller" << endl;
+	vec<VDisplay> displays;
 	for (const auto& dev : p->instance.refreshDevices()) {
 		auto& device = p->instance.getDevice(dev);
 		auto monitors = device.updateMonitors();
+		displays.insert(displays.end(), std::make_move_iterator(monitors.begin()), std::make_move_iterator(monitors.end()));
+	}
+
+	std::signal(SIGINT, signal_handler);
+	while (running) {
+		std::this_thread::yield();
 	}
 }
 

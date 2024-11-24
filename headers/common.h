@@ -32,6 +32,17 @@ namespace mland {
 		str_like() = default;
 		str_like(const T& t) : T(t) {}
 		str_like(T&& t) : T(std::move(t)) {}
+		str_like(const str_like& other) : T(other) {}
+		str_like(str_like&& other) noexcept : T(std::move(other)) {}
+
+		str_like& operator=(const str_like& other) {
+			T::operator=(other);
+			return *this;
+		}
+		str_like& operator=(str_like&& other) noexcept {
+			T::operator=(std::move(other));
+			return *this;
+		}
 
 		// ReSharper disable once CppNonExplicitConversionOperator
 		operator cstr() const {return T::c_str();}

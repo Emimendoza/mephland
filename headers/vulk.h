@@ -5,6 +5,7 @@
 #include <unordered_map>
 // Common header for Vulkan API among other things
 
+#define VULKAN_HPP_ASSERT_ON_RESULT(X)
 #define VULKAN_HPP_NO_CONSTRUCTORS
 #define VULKAN_HPP_NO_EXCEPTIONS
 #define VULKAN_HPP_RAII_NO_EXCEPTIONS

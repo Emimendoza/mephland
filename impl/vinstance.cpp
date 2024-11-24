@@ -233,17 +233,6 @@ vec<VDevice::id_t> VInstance::refreshDevices() {
 		MDEBUG << name << " Created device " << endl;
 		bool cont = false;
 		for (const auto& j : graphicsQueueFamilyIndex) {
-			const vk::CommandPoolCreateInfo cmdPoolCreateInfo{
-				.queueFamilyIndex = j
-			};
-			auto cmdRes = dev.dev.createCommandPool(cmdPoolCreateInfo);
-			if (!cmdRes.has_value()) {
-				MERROR << dev.name << " Could not create command pool " << to_str(cmdRes.error()) << endl;
-				cont = true;
-				break;
-			}
-			MDEBUG << dev.name << " Created command pool " << j << endl;
-			dev.cmdPools.emplace(j, std::move(cmdRes.value()));
 			auto queue = dev.dev.getQueue(j, 0);
 			if (!queue.has_value()) {
 				MERROR << dev.name << " Could not get queue " << to_str(queue.error()) << endl;
