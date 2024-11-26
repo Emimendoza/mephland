@@ -17,13 +17,13 @@ static VKAPI_ATTR VkBool32 VKAPI_CALL debugCallback(
 	MCLASS(ValLayers);
 	switch (messageSeverity) {
 		case VK_DEBUG_UTILS_MESSAGE_SEVERITY_INFO_BIT_EXT:
-			MINFO << pCallbackData->pMessage << endl;
+			// MINFO << pCallbackData->pMessage << endl;
 			break;
 		case VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT:
 			MERROR << pCallbackData->pMessage << endl;
 			break;
 		case VK_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT:
-			MDEBUG << pCallbackData->pMessage << endl;
+			// MDEBUG << pCallbackData->pMessage << endl;
 			break;
 		default:
 		case VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT:
@@ -130,8 +130,9 @@ vec<VDevice::id_t> VInstance::refreshDevices() {
 
 	for (auto& pDev : res.value()) {
 		const auto id = static_cast<VDevice::id_t>(pDev.getProperties().deviceID);
+		str name = pDev.getProperties().deviceName.data();
 		if (devices.contains(id)) {
-			MDEBUG << "Device " << pDev.getProperties().deviceName << " already exists" << endl;
+			MDEBUG << "Device " << name << " already exists" << endl;
 			continue;
 		}
 		auto props = pDev.enumerateDeviceExtensionProperties();
@@ -143,7 +144,7 @@ vec<VDevice::id_t> VInstance::refreshDevices() {
 		bool hasAllExtensions = true;
 		for (const auto& ext : deviceExtensions) {
 			if (std::ranges::find(availableExtensions, str(ext)) == availableExtensions.end()) {
-				MWARN << "Device " << pDev.getProperties().deviceName << " does not support extension " << ext << endl;
+				MWARN << "Device " << name << " does not support extension " << ext << endl;
 				hasAllExtensions = false;
 				break;
 			}
@@ -155,7 +156,14 @@ vec<VDevice::id_t> VInstance::refreshDevices() {
 		const auto drmProps = devProps.get<vk::PhysicalDeviceDrmPropertiesEXT>();
 		bool found_device = false;
 		if (!drmProps.hasPrimary) {
-			MDEBUG << "Device " << pDev.getProperties().deviceName << " does not have a primary node" << endl;
+			MDEBUG << "Device " << name << " does not have a primary node" << endl;
+			continue;
+		}
+
+		const auto devFeatures = pDev.getFeatures2<vk::PhysicalDeviceFeatures2, vk::PhysicalDeviceVulkan12Features>();
+		const auto vulkan12Features = devFeatures.get<vk::PhysicalDeviceVulkan12Features>();
+		if (!vulkan12Features.timelineSemaphore) {
+			MDEBUG << "Device " << name << " does not support timeline semaphores" << endl;
 			continue;
 		}
 
@@ -163,14 +171,14 @@ vec<VDevice::id_t> VInstance::refreshDevices() {
 
 		for (const auto& drm_id : drmHandler.getDevices() | std::views::keys) {
 			if (drm_id.major == drmProps.primaryMajor && drm_id.minor == drmProps.primaryMinor) {
-				MDEBUG << "Found matching DRM device for " << pDev.getProperties().deviceName << endl;
+				MDEBUG << "Found matching DRM device for " << name << endl;
 				found_device = true;
 				DRMid = drm_id;
 				break;
 			}
 		}
 		if (!found_device) {
-			MINFO << "No matching DRM device for " << pDev.getProperties().deviceName << endl;
+			MINFO << "No matching DRM device for " << name << endl;
 			continue;
 		}
 
@@ -186,7 +194,7 @@ vec<VDevice::id_t> VInstance::refreshDevices() {
 			constexpr auto transferFlags = vk::QueueFlagBits::eTransfer;
 			const auto& queueFamily = queueFamilyProperties[j];
 			if (graphicsFamilyQueueIndex == max && queueFamily.queueFlags & graphicsFlags ) {
-				MDEBUG << pDev.getProperties().deviceName  << " Found graphics queue family " << to_str(queueFamily.queueFlags) << endl;
+				MDEBUG << name  << " Found graphics queue family " << to_str(queueFamily.queueFlags) << endl;
 				graphicsFamilyQueueIndex = j;
 			}
 			if (queueFamily.queueFlags & transferFlags && countBits(static_cast<uint32_t>(queueFamily.queueFlags)) < transferBits) {
@@ -195,37 +203,45 @@ vec<VDevice::id_t> VInstance::refreshDevices() {
 			}
 		}
 		if (graphicsFamilyQueueIndex == max) {
-			MWARN << "Could not find a queue family with graphics capabilities for device " << pDev.getProperties().deviceName << endl;
+			MWARN << "Could not find a queue family with graphics capabilities for device " << name << endl;
 			continue;
 		}
-		MDEBUG << pDev.getProperties().deviceName << " Found transfer queue family " <<
+		MDEBUG << name << " Found transfer queue family " <<
 			to_str(queueFamilyProperties[transferFamilyQueueIndex].queueFlags) << endl;
 		std::unordered_set graphicsQueueFamilyIndex{graphicsFamilyQueueIndex, transferFamilyQueueIndex};
 
 		vec<vk::DeviceQueueCreateInfo> queueCreateInfos;
+		constexpr float queuePriority = 1.0f;
 		for (const auto& queueFamilyIndex : graphicsQueueFamilyIndex) {
 			queueCreateInfos.push_back({
 				.queueFamilyIndex = queueFamilyIndex,
 				.queueCount = 1,
-				.pQueuePriorities = &globals::queuePriority
+				.pQueuePriorities = &queuePriority
 			});
 		}
 
+		static constexpr  vk::PhysicalDeviceVulkan12Features deviceFeatures{
+			.timelineSemaphore = vk::True
+		};
+
 		const vk::DeviceCreateInfo deviceCreateInfo{
+			.pNext = &deviceFeatures,
 			.queueCreateInfoCount = queueCreateInfos.size32(),
 			.pQueueCreateInfos = queueCreateInfos.data(),
 			.enabledExtensionCount = deviceExtensions.size32(),
 			.ppEnabledExtensionNames = deviceExtensions.data()
 		};
 
-		str name = pDev.getProperties().deviceName.data();
+
 		auto result = pDev.createDevice(deviceCreateInfo);
 		if (!result.has_value()) {
 			MERROR << name << " Could not create device: " << to_str(result.error()) << endl;
 			continue;
 		}
 
-		VDevice dev {id, drmHandler.takeDevice(DRMid), (pDev.getProperties().deviceName.data())};
+		auto dev_ptr = new VDevice(id, drmHandler.takeDevice(DRMid), (name.data()));
+		u_ptr<VDevice> udev(dev_ptr);
+		auto& dev = *dev_ptr;
 		const_cast<uint32_t&>(dev.graphicsQueueFamilyIndex) = graphicsFamilyQueueIndex;
 		const_cast<uint32_t&>(dev.transferQueueFamilyIndex) = transferFamilyQueueIndex;
 		dev.dev = std::move(result.value());
@@ -250,10 +266,11 @@ vec<VDevice::id_t> VInstance::refreshDevices() {
 			MERROR << dev.name << " Could not create shader modules" << endl;
 			continue;
 		}
+
 		dev.vertShader = std::move(vertShader.value());
 		dev.fragShader = std::move(fragShader.value());
 		dev.parent = this;
-		devices.emplace(id, std::move(dev));
+		devices.emplace(id, std::move(udev));
 		ret.push_back(id);
 	}
 	return ret;

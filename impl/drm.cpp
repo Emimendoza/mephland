@@ -30,23 +30,8 @@ vec<DRM_Device::Connector> DRM_Device::refreshConnectors() {
 			MWARN << "Failed to get connector " << i << " for " << name << endl;
 			continue;
 		}
-		Connector c{.id = conn->connector_id, .connected = conn->connection == DRM_MODE_CONNECTED};
-		if (c.connected) {
-			if (std::ranges::find(connected, c) == connected.end()) {
-				MDEBUG << "Connected connector " << c.id << " on " << name << endl;
-				connected.push_back(c);
-				ret.push_back(c);
-				if (std::ranges::find(disconnected, c) != disconnected.end())
-					std::erase(disconnected, c);
-			}
-		} else {
-			if (std::ranges::find(disconnected, c) == disconnected.end()) {
-				MDEBUG << "Disconnected connector " << c.id << " on " << name << endl;
-				disconnected.push_back(c);
-				ret.push_back(c);
-				if (std::ranges::find(connected, c) != connected.end())
-					std::erase(connected, c);
-			}
+		if (conn->connection == DRM_MODE_CONNECTED) {
+			ret.push_back(conn->connector_id);
 		}
 		drmModeFreeConnector(conn);
 	}

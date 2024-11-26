@@ -20,7 +20,8 @@ int main() {
 	set_log_level();
 	auto drm_Paths = get_drm_paths();
 	bool validation_layers = get_validation_layers();
-	Controller controller = {{std::move(drm_Paths), validation_layers}};
+	u_ptr instance = std::make_unique<VInstance>(std::move(drm_Paths), validation_layers);
+	Controller controller(instance);
 	controller.run();
 	return  0;
 }
