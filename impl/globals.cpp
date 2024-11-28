@@ -1,5 +1,5 @@
 #include "globals.h"
-#include "MState.h"
+#include "mstate.h"
 using namespace mland;
 
 class NullBuffer final : public std::streambuf {

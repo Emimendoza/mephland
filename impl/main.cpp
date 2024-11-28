@@ -3,25 +3,36 @@
 
 #include "controller.h"
 #include "drm_backend.h"
+#include "sdl_backend.h"
 #include "env.h"
-#include "vinstance.h"
+
 
 MCLASS(Main);
 
 using namespace mland;
 
 static void set_log_level();
-static DRM_Handler::DRM_Paths get_drm_paths();
+static DrmBackend::DrmPaths get_drm_paths();
 static bool get_validation_layers();
 
 
 int main() {
 	MINFO << "Starting MephLand Compositor" << endl;
 	set_log_level();
-	auto drm_Paths = get_drm_paths();
-	bool validation_layers = get_validation_layers();
-	u_ptr instance = std::make_unique<VInstance>(std::move(drm_Paths), validation_layers);
-	Controller controller(instance);
+	u_ptr<Backend> backend;
+
+	const bool validation_layers = get_validation_layers();
+	try {
+		auto drm_Paths = get_drm_paths();
+		backend = std::make_unique<DrmBackend>(drm_Paths);
+	} catch (const std::exception& e) {
+		MERROR << "Failed to create backend: " << e.what() << endl;
+		MINFO << "Falling back to SDL backend" << endl;
+		backend = std::make_unique<SdlBackend>(1);
+	}
+
+	u_ptr instance = backend->createInstance(validation_layers);
+	Controller controller(std::move(instance));
 	controller.run();
 	return  0;
 }
@@ -32,23 +43,23 @@ static void set_log_level() {
 		log_level = std::strtoul(log_env, nullptr, 10);
 	}
 	switch (log_level) {
-		case eDebug:
-			globals::debug.rdbuf(std::cout.rdbuf());
-		case eInfo:
-			globals::info.rdbuf(std::cout.rdbuf());
-		case eWarn:
-			globals::warn.rdbuf(std::cerr.rdbuf());
-		case eError:
-			globals::error.rdbuf(std::cerr.rdbuf());
-			break;
-		default:
-			std::cerr << "Invalid log level: " << log_level << endl;
-			exit(1);
+	case eDebug:
+		globals::debug.rdbuf(std::cout.rdbuf());
+	case eInfo:
+		globals::info.rdbuf(std::cout.rdbuf());
+	case eWarn:
+		globals::warn.rdbuf(std::cerr.rdbuf());
+	case eError:
+		globals::error.rdbuf(std::cerr.rdbuf());
+		break;
+	default:
+		std::cerr << "Invalid log level: " << log_level << endl;
+		exit(1);
 	}
 }
 
-static DRM_Handler::DRM_Paths get_drm_paths() {
-	DRM_Handler::DRM_Paths drm_Paths{};
+static  DrmBackend::DrmPaths get_drm_paths() {
+	 DrmBackend::DrmPaths drm_Paths{};
 	if (const auto drm_env = std::getenv(DRM_DEVICE_ENV)) {
 		MDEBUG << "User Specified DRM devices: " << drm_env << endl;
 		auto drm_devs = str_view(drm_env).split(':');

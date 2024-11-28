@@ -2,80 +2,140 @@
 #include <utility>
 
 #include "common.h"
+#include "vdevice.h"
+#include "vdisplay.h"
+#include "vinstance.h"
 
-namespace mland {
-class DRM_Device {
-public:
-	DRM_Device(std::nullptr_t) {}
-
-	struct id_t {
-		uint64_t major{};
-		uint64_t minor{};
-		bool operator==(const id_t& other) const { return other.major == major && other.minor == minor; }
-	};
-
-	typedef uint32_t Connector;
-
-private:
-	friend class DRM_Handler;
-	DRM_Device(str name, const id_t id) : name(std::move(name)), id(id) {}
-
-	int fd{-1};
-	str name;
-
-public:
-	MCLASS(DRM_Device);
-	~DRM_Device();
-	DRM_Device(DRM_Device&& other) noexcept : fd(other.fd), name(std::move(other.name)), id(other.id) { other.fd = -1; }
-	DRM_Device(const DRM_Device&) = delete;
-
-	vec<Connector> refreshConnectors();
-
-	const id_t id;
-
-	constexpr int getFd() const { return fd; }
-	constexpr const str& getName() const { return name; }
+namespace mland::_details {
+struct DrmId {
+	int64_t major{};
+	int64_t minor{};
+	bool operator==(const DrmId& other) const { return other.major == major && other.minor == minor; }
 };
 }
-
 template <>
-struct std::hash<mland::DRM_Device::id_t> {
-	std::size_t operator()(const mland::DRM_Device::id_t& id) const noexcept {
+struct std::hash<mland::_details::DrmId> {
+	std::size_t operator()(const mland::_details::DrmId id) const noexcept {
 		return std::hash<uint64_t>{}(id.major) ^ std::hash<uint64_t>{}(id.minor);
 	}
 };
-
 namespace mland {
-class DRM_Handler {
+class DrmBackend final : public Backend {
 public:
-	struct DRM_Paths {
+	MCLASS(DrmBackend);
+	class DrmDevice;
+	class DrmVInstance;
+	class DrmVDevice;
+	class DrmVDisplay;
+
+	using DrmId = _details::DrmId;
+
+
+	struct DrmPaths {
 		vec<str> explicitInclude;
 		vec<str> explicitExclude;
 	};
 
-	MCLASS(DRM_Handler);
-	DRM_Handler(std::nullptr_t) {}
-	DRM_Handler(DRM_Paths drmPaths);
-	DRM_Handler(const DRM_Handler&) = delete;
-	DRM_Handler(DRM_Handler&&) = default;
-	~DRM_Handler();
-
-	vec<DRM_Device::id_t> refreshDevices();
-
-	constexpr const map<DRM_Device::id_t, DRM_Device>& getDevices() const { return drmDevices; }
-
+	DrmBackend(DrmPaths& drmPaths);
+	DrmBackend(const DrmBackend&) = delete;
+	DrmBackend(DrmBackend&&) = delete;
+	~DrmBackend() override;
+	vec<DrmId> refreshDevices();
+	constexpr const map<DrmId, DrmDevice>& getDevices() const { return drmDevices; }
 	static vec<str> listDrmDevices();
 
-private:
-	friend class VInstance;
+	const vec<cstr>& requiredInstanceExtensions() const override;
+	const vec<cstr>& requiredDeviceExtensions() const override;
+	u_ptr<VInstance> createInstance(bool validation_layers) override;
 
-	DRM_Device takeDevice(const DRM_Device::id_t& id) {
+	class DrmDevice {
+	public:
+		MCLASS(DrmDevice);
+		typedef uint32_t Connector;
+
+		~DrmDevice();
+		DrmDevice(DrmDevice&& other) noexcept : id(other.id), fd(other.fd), name(std::move(other.name)) { other.fd = -1; }
+		DrmDevice& operator=(DrmDevice&& other) noexcept{
+			if (this == &other)
+				return *this;
+			id = other.id;
+			fd = other.fd;
+			name = std::move(other.name);
+			other.fd = -1;
+			return *this;
+		}
+		DrmDevice(const DrmDevice&) = delete;
+
+		vec<Connector> refreshConnectors();
+		DrmId id{};
+		constexpr int getFd() const { return fd; }
+		constexpr const str& getName() const { return name; }
+		DrmDevice(std::nullptr_t) {}
+	private:
+		friend class DrmBackend;
+		DrmDevice(str name, const DrmId id) : id(id), name(std::move(name)) {}
+
+		int fd{-1};
+		str name;
+	};
+
+private:
+	friend class DrmVInstance;
+	DrmDevice takeDevice(const DrmId& id) {
 		auto dev = std::move(drmDevices.at(id));
 		drmDevices.erase(id);
 		return dev;
 	}
+	const DrmPaths drmPaths;
+	map<DrmId, DrmDevice> drmDevices;
+};
 
-	const DRM_Paths drmPaths;
-	map<DRM_Device::id_t, DRM_Device> drmDevices;
+class DrmBackend::DrmVInstance final : public VInstance {
+protected:
+	friend class DrmBackend;
+	DrmVInstance(const bool enableValidationLayers, DrmBackend& backend) : VInstance(enableValidationLayers, backend) {}
+	opt<u_ptr<VDevice>> createDevice(vkr::PhysicalDevice&& physicalDevice, const vec<cstr>& extensions) override;
+public:
+	MCLASS(DrmVInstance);
+	DrmVInstance(const DrmVInstance&) = delete;
+	DrmVInstance(DrmVInstance&&) = delete;
+	bool deviceGood(const vkr::PhysicalDevice& pDev) override;
+};
+
+class DrmBackend::DrmVDevice final : public VDevice {
+public:
+	MCLASS(DrmVDevice);
+	DrmVDevice(const DrmVDevice&) = delete;
+	DrmVDevice(DrmVDevice&&) = delete;
+
+	opt<u_ptr<DrmVDisplay>> getDrmDisplay(DrmDevice::Connector con);
+	constexpr const DrmDevice& getDRMDevice() const { return drmDev; }
+
+	vec<u_ptr<VDisplay>> updateMonitors() override;
+
+private:
+	friend DrmVInstance;
+	friend DrmVDisplay;
+	DrmVDevice(vkr::PhysicalDevice&& physicalDevice, const vec<cstr>& extensions, DrmVInstance* parent);
+	DrmDevice drmDev{nullptr};
+	std::unordered_set<DrmDevice::Connector> connectors{};
+};
+
+class DrmBackend::DrmVDisplay final : public VDisplay {
+public:
+	MCLASS(DrmVDisplay);
+	DrmVDisplay(const DrmVDisplay&) = delete;
+	DrmVDisplay(DrmVDisplay&&) = delete;
+	~DrmVDisplay() override;
+protected:
+	void createSurface() override;
+private:
+	friend class DrmVDevice;
+	DrmVDisplay(str&&, DrmVDevice*, vkr::DisplayKHR&&, const vk::DisplayPropertiesKHR&, DrmDevice::Connector);
+	uint32_t createModes();
+	void createSurface(uint32_t mode_index);
+	void deleteSurface() override;
+	DrmDevice::Connector con{};
+	vkr::SurfaceKHR vkrSurface{nullptr};
 };
 }

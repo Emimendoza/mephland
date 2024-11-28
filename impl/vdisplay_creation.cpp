@@ -1,41 +1,41 @@
-#include "vdisplay_impl.h"
+#include "vdisplay.h"
 #include "vinstance.h"
 
 // Here are non render function
 
 using namespace mland;
 
-void VDisplay::impl::start() {
-	thread = std::thread(&impl::workerMain, this);
+void VDisplay::start() {
+	thread = std::thread(&VDisplay::workerMain, this);
 }
 
-VDisplay::VDisplay(str&& name, VDevice* vDev, vkr::DisplayKHR&& display, const vk::DisplayPropertiesKHR& displayProps, const DRM_Device::Connector con) :
-	p(std::make_unique<impl>()) {
-	p->name = std::move(name);
-	p->vDev = vDev;
-	p->display = std::move(display);
-	p->displayProps = displayProps;
-	p->con = con;
-	p->start();
+void VDisplay::stop() {
+	{
+		std::lock_guard lock(stateMutex);
+		if (state == eStopped)
+			return;
+	}
+	MDEBUG << name << " Stopping display" << endl;
+	{
+		std::lock_guard lock(stateMutex);
+		state = eStop;
+	}
+	thread.join();
+	std::lock_guard lock(stateMutex);
+	state = eStopped;
 }
 
 VDisplay::~VDisplay() {
-	if (p == nullptr) {
-		return;
-	}
-	{
-		std::unique_lock lock(p->stateMutex);
-		p->state = eStop;
-	}
-	p->thread.join();
-	p->vDev->connectors.erase(p->con);
+	MDEBUG << name << " Destroying display" << endl;
+	stop();
 }
+
 
 vec <vk::DisplayPlanePropertiesKHR> VDisplay::getDisplayPlaneProperties() const {
 	vec<vk::DisplayPlanePropertiesKHR> displayPlaneProperties;
-	auto allDisplayProps = p->vDev->pDev.getDisplayPlanePropertiesKHR();
+	auto allDisplayProps = vDev->pDev.getDisplayPlanePropertiesKHR();
 	for (const auto& prop : allDisplayProps) {
-		if (prop.currentDisplay == p->display) {
+		if (prop.currentDisplay == display) {
 			displayPlaneProperties.push_back(prop);
 		}
 	}
@@ -52,13 +52,13 @@ vec <vk::DisplayPlanePropertiesKHR> VDisplay::getDisplayPlaneProperties() const 
 		return a.currentStackIndex < b.currentStackIndex;
 	});
 	if (displayPlaneProperties.empty()) {
-		MERROR << p->name << " No display plane properties" << endl;
+		MERROR << name << " No display plane properties" << endl;
 	}
 	return displayPlaneProperties;
 }
 
 VDisplay::SurfaceInfo VDisplay::getSurfaceInfo() const{
-	return {p->vDev->pDev.getSurfaceFormatsKHR(p->surface), p->vDev->pDev.getSurfacePresentModesKHR(p->surface)};
+	return {vDev->pDev.getSurfaceFormatsKHR(surface), vDev->pDev.getSurfacePresentModesKHR(surface)};
 }
 
 vk::SurfaceFormatKHR VDisplay::bestFormat(const vec<vk::SurfaceFormatKHR> &formatPool, bool HDR) {
@@ -66,10 +66,10 @@ vk::SurfaceFormatKHR VDisplay::bestFormat(const vec<vk::SurfaceFormatKHR> &forma
 	return formatPool[0];
 }
 
-void VDisplay::impl::createEverything() {
+void VDisplay::createEverything() {
 	createTimeLineSemaphores();
 	createCommandPools();
-	createSurface(createModes());
+	createSurface();
 	const vec format = vDev->pDev.getSurfaceFormatsKHR(surface);
 	const vec presentModes = vDev->pDev.getSurfacePresentModesKHR(surface);
 	auto presentMode = presentModes[0];
@@ -87,7 +87,7 @@ void VDisplay::impl::createEverything() {
 	createFramebuffers();
 }
 
-void VDisplay::impl::createTimeLineSemaphores() {
+void VDisplay::createTimeLineSemaphores() {
 	static constexpr vk::SemaphoreTypeCreateInfo semType {
 		.semaphoreType = vk::SemaphoreType::eTimeline,
 		.initialValue = 0
@@ -107,51 +107,9 @@ void VDisplay::impl::createTimeLineSemaphores() {
 
 }
 
-uint32_t VDisplay::impl::createModes() {
-	MDEBUG << name << " Creating display modes" << endl;
-	displayModes = std::move(display.getModeProperties());
-	const auto bestRes = displayProps.physicalResolution;
-	uint32_t best = 0;
-	uint32_t best_refresh = 0;
-	for(uint32_t i = 0; i < displayModes.size(); i++) {
-		const auto& [displayMode, parameters] = displayModes[i];
-		MDEBUG << name << " Found mode: " << parameters.refreshRate/1000.0 << " Hz, " <<
-			parameters.visibleRegion.width << "x" << parameters.visibleRegion.height << endl;
-		if (parameters.visibleRegion != bestRes) {
-			continue;
-		}
-		if (parameters.refreshRate > best_refresh) {
-			best_refresh = parameters.refreshRate;
-			best = i;
-		}
-	}
-	MINFO << name << " Best mode: " << displayModes[best].parameters.refreshRate / 1000.0 << " Hz, " <<
-		  displayModes[best].parameters.visibleRegion.width << "x" << displayModes[best].parameters.visibleRegion.height << endl;
-	return best;
-}
 
-void VDisplay::impl::createSurface(const uint32_t mode_index) {
-	MDEBUG << name << " Creating surface" << endl;
-	assert(mode_index < displayModes.size());
-	const auto &[displayMode, parameters] = displayModes[mode_index];
-	const vk::DisplaySurfaceCreateInfoKHR surfaceCreateInfo{
-		.displayMode = displayMode,
-		.planeIndex = 0,
-		.planeStackIndex = 0,
-		.transform = vk::SurfaceTransformFlagBitsKHR::eIdentity,
-		.globalAlpha = {}, // Ignored
-		.alphaMode = vk::DisplayPlaneAlphaFlagBitsKHR::ePerPixel,
-		.imageExtent = parameters.visibleRegion,
-	};
-	const auto &instance = vDev->parent->getInstance();
-	auto res = instance.createDisplayPlaneSurfaceKHR(surfaceCreateInfo);
-	if (!res.has_value()) [[unlikely]]
-		throw std::runtime_error(name + " Failed to create surface: " + to_str(res.error()));
-	assert(vDev->pDev.getSurfaceSupportKHR(vDev->graphicsQueueFamilyIndex, res.value()));
-	surface = std::move(res.value());
-}
 
-void VDisplay::impl::createSwapchain(const vk::PresentModeKHR presentMode, const vk::SurfaceFormatKHR format) {
+void VDisplay::createSwapchain(const vk::PresentModeKHR presentMode, const vk::SurfaceFormatKHR format) {
 	MDEBUG << name << " Creating swapchain " << endl;
 	const auto surfaceCaps = vDev->pDev.getSurfaceCapabilitiesKHR(surface);
 	assert(surfaceCaps.currentExtent.height > 0 && surfaceCaps.currentExtent.width > 0);
@@ -192,7 +150,7 @@ void VDisplay::impl::createSwapchain(const vk::PresentModeKHR presentMode, const
 	this->format = format.format;
 }
 
-void VDisplay::impl::createPipelineLayout() {
+void VDisplay::createPipelineLayout() {
 	MDEBUG << name << " Creating pipeline layout" << endl;
 	// TODO: Use uniform buffers
 	static constexpr vk::PipelineLayoutCreateInfo layout {
@@ -202,7 +160,7 @@ void VDisplay::impl::createPipelineLayout() {
 		throw std::runtime_error(name + " Failed to create pipeline layout: " + to_str(res.error()));
 	pipelineLayout = std::move(res.value());
 }
-void VDisplay::impl::createRenderPass() {
+void VDisplay::createRenderPass() {
 	MDEBUG << name << " Creating render pass" << endl;
 	vec<vk::AttachmentDescription> attachments{};
 	vec<vk::AttachmentReference> attachmentRefs{};
@@ -249,7 +207,7 @@ void VDisplay::impl::createRenderPass() {
 	renderPass = std::move(renderRes.value());
 }
 
-void VDisplay::impl::createRenderPipeline() {
+void VDisplay::createRenderPipeline() {
 	MDEBUG << name << " Creating render pipeline" << endl;
 	vec<vk::PipelineShaderStageCreateInfo> shaderStages{};
 	shaderStages.push_back({
@@ -334,7 +292,7 @@ void VDisplay::impl::createRenderPipeline() {
 	pipeline = std::move(res.value());
 }
 
-void VDisplay::impl::createFramebuffers() {
+void VDisplay::createFramebuffers() {
 	MDEBUG << name << " Creating framebuffers"<< endl;
 	images.clear();
 	for (const auto& image : swapchain.getImages()) {
@@ -342,25 +300,19 @@ void VDisplay::impl::createFramebuffers() {
 	}
 }
 
-void VDisplay::impl::createCommandPools() {
+void VDisplay::createCommandPools() {
 	MDEBUG << name << " Creating command pools" << endl;
 	graphicsPool = vDev->createCommandPool(vDev->graphicsQueueFamilyIndex);
 	transferPool = vDev->createCommandPool(vDev->transferQueueFamilyIndex);
 }
 
 bool VDisplay::isGood() {
-	if (p == nullptr) {
-		MERROR << "Display is null" << endl;
-		return false;
-	}
-
-	auto& us = *p;
-	std::unique_lock lock(us.stateMutex);
-	us.stateCond.wait(lock, [&us] { return us.state > ePreInit; });
-	return us.state < eError;
+	std::unique_lock lock(stateMutex);
+	stateCond.wait(lock, [this] { return state > ePreInit; });
+	return state < eError;
 }
 
-void VDisplay::impl::cleanup() {
+void VDisplay::cleanup() {
 	s_ptr<DisplaySemaphores> oldSemaphores;
 	{
 		std::lock_guard lock(timelineMutex);
@@ -380,7 +332,7 @@ void VDisplay::impl::cleanup() {
 	renderPass.clear();
 	graphicsPool.clear();
 	swapchain.clear();
-	surface.clear();
+	deleteSurface();
 	while (oldSemaphores.use_count() > 1) {
 		// waiting for other threads to stop using our semaphore
 		std::this_thread::yield();
@@ -389,20 +341,19 @@ void VDisplay::impl::cleanup() {
 
 void VDisplay::setState(const State state) {
 	const auto mask = eIdle | eStop | state;
-	auto& us = *p;
-	std::unique_lock lock(us.stateMutex);
-	us.stateCond.wait(lock, [&us, mask]{return (us.state & mask) != 0; });
-	if (us.state & state) {
+	std::unique_lock lock(stateMutex);
+	stateCond.wait(lock, [this, mask]{return (this->state & mask) != 0; });
+	if (this->state & state) {
 		return; // Already in the desired state
 	}
-	if (us.state & eStop) {
-		MERROR << us.name << " Display is stopped" << endl;
+	if (this->state & eStop) {
+		MERROR << name << " Display is stopped" << endl;
 		return;
 	}
-	us.state = state;
+	this->state = state;
 }
 
-VDisplay::State VDisplay::impl::getState() {
+VDisplay::State VDisplay::getState() {
 	std::unique_lock lock(stateMutex);
 	return state;
 }

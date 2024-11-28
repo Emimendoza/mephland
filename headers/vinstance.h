@@ -1,31 +1,27 @@
 #pragma once
 #include "vulk.h"
-#include "drm_backend.h"
 #include "vdevice.h"
 
 namespace mland {
-class VInstance {
+class Backend::VInstance {
 public:
 	MCLASS(VInstance);
-	VInstance(
-		DRM_Handler::DRM_Paths drmDevs,
-		bool enableValidationLayers = false
-	);
-
-	VInstance(std::nullptr_t) {}
 	VInstance(const VInstance&) = delete;
 	VInstance(VInstance&&) = delete;
 
 	vec<VDevice::id_t> refreshDevices();
+	virtual bool deviceGood(const vkr::PhysicalDevice& pDev) = 0;
 
 	constexpr VDevice& getDevice(const VDevice::id_t& id) { return *devices.at(id); }
 	constexpr vkr::Instance& getInstance() { return instance; }
+	constexpr Backend* getBackend() { return backend; }
 
-	~VInstance();
-
-private:
+	virtual ~VInstance();
+protected:
+	VInstance(bool enableValidationLayers, Backend& backend);
+	virtual opt<u_ptr<VDevice>> createDevice(vkr::PhysicalDevice&& physicalDevice, const vec<cstr>& extensions) = 0;
 	static vkr::Context context;
-	DRM_Handler drmHandler{nullptr};
+	Backend* backend;
 	vkr::Instance instance{nullptr};
 	vkr::DebugUtilsMessengerEXT debugMessenger{nullptr};
 	map<VDevice::id_t, u_ptr<VDevice>> devices{};

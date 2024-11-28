@@ -8,16 +8,17 @@ using namespace mland;
 
 struct Controller::impl {
 	u_ptr<VInstance> instance;
-	vec<VDisplay> displays;
-	impl(u_ptr<VInstance>& instance) : instance(std::move(instance)){}
+	vec<u_ptr<VDisplay>> displays{};
+	impl(u_ptr<VInstance>&& instance) : instance(std::move(instance)){}
 };
 
-Controller::Controller(u_ptr<VInstance>& instance) {
-	p = std::make_unique<impl>(instance);
+Controller::Controller(u_ptr<VInstance>&& instance) {
+	p = std::make_unique<impl>(std::move(instance));
 	MDEBUG << "Controller created" << endl;
 }
 
 Controller::~Controller() {
+	p.reset();
 	MDEBUG << "Controller destroyed" << endl;
 }
 
@@ -30,9 +31,9 @@ static void signal_handler(int signal) {
 
 void Controller::refreshMonitors() {
 	MDEBUG << "Refreshing monitors" << endl;
-	vec<VDisplay> displays;
+	vec<u_ptr<VDisplay>> displays;
 	for (auto& display : p->displays) {
-		if (display.isGood()) {
+		if (display->isGood()) {
 			displays.push_back(std::move(display));
 		}
 	}
@@ -49,7 +50,7 @@ void Controller::refreshMonitors() {
 void Controller::run() {
 	MDEBUG << "Running controller" << endl;
 	refreshMonitors();
-
+	running = false;
 	std::signal(SIGINT, signal_handler);
 	while (running) {
 		VDisplay::requestRender();

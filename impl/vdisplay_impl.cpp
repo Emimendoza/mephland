@@ -1,11 +1,12 @@
-#include "vdisplay_impl.h"
+#include "vdisplay.h"
+#include "vdevice.h"
 
 // Here are helper functions for the renderer and helper classes
 
 using namespace mland;
 
 // We use graphics pool for the background transfer because its GPU to GPU
-VDisplay::impl::Image::Image(const impl& us, const vk::Image& img) :
+VDisplay::Image::Image(const VDisplay& us, const vk::Image& img) :
 image(img), graphicsCmd(us.vDev->createCommandBuffer(us.graphicsPool)), backgroundCmd(us.vDev->createCommandBuffer(us.graphicsPool)) {
 	static constexpr vk::ComponentMapping mapping {
 		.r = vk::ComponentSwizzle::eIdentity,
@@ -45,7 +46,7 @@ image(img), graphicsCmd(us.vDev->createCommandBuffer(us.graphicsPool)), backgrou
 	this->framebuffer = std::move(fbRet.value());
 }
 
-vkr::Semaphore VDisplay::impl::createSem() const {
+vkr::Semaphore VDisplay::createSem() const {
 	static constexpr vk::SemaphoreCreateInfo semInfo{};
 	auto semRes = vDev->dev.createSemaphore(semInfo);
 	if (!semRes.has_value()) [[unlikely]]
@@ -53,7 +54,7 @@ vkr::Semaphore VDisplay::impl::createSem() const {
 	return std::move(semRes.value());
 }
 
-vkr::Fence VDisplay::impl::createFence() const {
+vkr::Fence VDisplay::createFence() const {
 	static constexpr vk::FenceCreateInfo fenceInfo{};
 	auto fenceRes = vDev->dev.createFence(fenceInfo);
 	if (!fenceRes.has_value()) [[unlikely]]
@@ -61,19 +62,19 @@ vkr::Fence VDisplay::impl::createFence() const {
 	return std::move(fenceRes.value());
 }
 
-VDisplay::impl::SyncObjs::SyncObjs(const impl& us) :
+VDisplay::SyncObjs::SyncObjs(const VDisplay& us) :
 imageAvailable(us.createSem()),
 backgroundFinished(us.createSem()),
 renderFinished(us.createSem()),
 inFlight(us.createFence()) {}
 
-VDisplay::impl::Image::~Image() {
+VDisplay::Image::~Image() {
 	graphicsCmd.clear();
 	framebuffer.clear();
 	view.clear();
 }
 
-uint32_t VDisplay::impl::getSyncObj() {
+uint32_t VDisplay::getSyncObj() {
 	if (!freeSyncObjs.empty()) {
 		const auto temp = freeSyncObjs.top();
 		freeSyncObjs.pop();
@@ -83,7 +84,7 @@ uint32_t VDisplay::impl::getSyncObj() {
 	return syncObjs.size() - 1;
 }
 
-void VDisplay::impl::waitFence(const vkr::Fence& fence) const {
+void VDisplay::waitFence(const vkr::Fence& fence) const {
 	const auto res = vDev->dev.waitForFences(*fence, true, UINT64_MAX);
 	if (res != vk::Result::eSuccess) {
 		MERROR << name << " Failed to wait for fence: " << to_str(res) << endl;

@@ -12,6 +12,7 @@ include(CheckIncludeFileCXX)
 
 option(USE_REFLECTION "Use experimental c++ reflection" OFF)
 option(OPTIMIZE "Enable optimizations" OFF)
+option(SDL_BACKEND "Compile with SDL backend" ON)
 
 
 if (USE_REFLECTION)
@@ -30,7 +31,13 @@ find_package(PkgConfig REQUIRED)
 find_package(Libdrm REQUIRED)
 
 pkg_check_modules(VULKAN REQUIRED vulkan)
-
+if (SDL_BACKEND)
+	add_compile_definitions(MLAND_SDL_BACKEND)
+	pkg_check_modules(SDL3 REQUIRED sdl3)
+else ()
+	set(SDL3_LIBRARIES "")
+	set(SDL3_INCLUDE_DIRS "")
+endif()
 file(GLOB_RECURSE SOURCES "impl/*.cpp")
 file(GLOB_RECURSE HEADERS "headers/*.h")
 file(GLOB_RECURSE TEMPLATES "headers/*.tcc")
@@ -42,10 +49,12 @@ target_include_directories(mephland PRIVATE
 		headers
 		${VULKAN_INCLUDE_DIRS}
 		${Libdrm_INCLUDE_DIRS}
+		${SDL3_INCLUDE_DIRS}
 )
 target_link_libraries(mephland PRIVATE
 		${VULKAN_LIBRARIES}
 		${Libdrm_LIBRARIES}
+		${SDL3_LIBRARIES}
 )
 
 add_custom_command(

@@ -109,12 +109,25 @@ using opt = std::optional<T>;
 
 // Forward declaration of all classes
 
-class DRM_Device;
-class DRM_Handler;
-class VDevice;
+class Backend {
+public:
+	virtual ~Backend() = default;
+	MCLASS(Backend);
+
+	class VDevice;
+	class VDisplay;
+	class VInstance;
+
+	virtual const vec<cstr>& requiredInstanceExtensions() const = 0;
+	virtual const vec<cstr>& requiredDeviceExtensions() const = 0;
+	virtual u_ptr<VInstance> createInstance(bool validation_layers) = 0;
+
+
+};
+using VDisplay = Backend::VDisplay;
+using VDevice = Backend::VDevice;
+using VInstance = Backend::VInstance;
 struct VShader;
-class VDisplay;
-class VInstance;
 class Controller;
 struct MState;
 }

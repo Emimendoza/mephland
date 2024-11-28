@@ -1,36 +1,18 @@
 #include "vdevice.h"
 #include "vdisplay.h"
-#include "drm_backend.h"
 #include "vshaders.h"
 using namespace mland;
 
-opt<VDisplay> VDevice::getDRMDisplay(const DRM_Device::Connector con) {
-	auto res = pDev.getDrmDisplayEXT(drmDev.getFd(), con);
-	if (!res.has_value()) {
-		MERROR << "Failed to get display for connector: " << to_str(res.error()) << endl;
-		return std::nullopt;
+template <typename T>
+static constexpr uint8_t countBits(T bits) {
+	static_assert(std::numeric_limits<uint8_t>::max() > sizeof(T)*8);
+	uint8_t count = 0;
+	for(uint8_t i = 0; i < sizeof(T) * 8; i++) {
+		if(bits & 1)
+			count++;
+		bits <<= 1;
 	}
-	pDev.acquireDrmDisplayEXT(drmDev.getFd(), res.value());
-	auto allDisplayProps = pDev.getDisplayPropertiesKHR();
-	vk::DisplayPropertiesKHR displayProps{nullptr};
-	for (const auto& prop : allDisplayProps) {
-		if (prop.display == res.value()) {
-			displayProps = prop;
-			break;
-		}
-	}
-	if (displayProps.display == VK_NULL_HANDLE) {
-		MERROR << name << " Failed to get display properties" << endl;
-		return std::nullopt;
-	}
-	VDisplay display(name + ' ' + displayProps.displayName, this, std::move(res.value()), displayProps, con);
-	if (!display.isGood()) {
-		MERROR << name << " Display is not good" << endl;
-		return std::nullopt;
-	}
-
-	MDEBUG << name << " Created display for connector " << con << endl;
-	return std::make_optional(std::move(display));
+	return count;
 }
 
 vkr::CommandBuffer VDevice::createCommandBuffer(const vkr::CommandPool& pool) {
@@ -47,27 +29,6 @@ vkr::CommandBuffer VDevice::createCommandBuffer(const vkr::CommandPool& pool) {
 	assert(res.value().size() == 1);
 	MDEBUG << name << " Created command buffer" << endl;
 	return std::move(res.value().front());
-}
-
-vec<VDisplay> VDevice::updateMonitors() {
-	vec<VDisplay> ret;
-	const auto cons = drmDev.refreshConnectors();
-	MDEBUG << "Updating monitors for device " << name << endl;
-	for (const auto& con : cons) {
-		if (connectors.contains(con)) {
-			MDEBUG << name << " Already have display for connector " << con << endl;
-			continue;
-		}
-		auto res = getDRMDisplay(con);
-		if (!res.has_value()) {
-			MERROR << name << " Failed to get display for connector " << con << endl;
-			continue;
-		}
-		MINFO << name << " Found display for connector " << con << endl;
-		auto& display = res.value();
-		ret.emplace_back(std::move(display));
-	}
-	return ret;
 }
 
 opt<vkr::ShaderModule> VDevice::createShaderModule(const VShader& shader) {
@@ -109,3 +70,87 @@ vk::Result VDevice::present(const uint32_t queueFamilyIndex, const vk::PresentIn
 	return queue.presentKHR(presentInfo);
 }
 
+VDevice::VDevice(vkr::PhysicalDevice&& physicalDevice, const vec<cstr>& extensions, VInstance* parent) :
+parent(parent),
+pDev(std::move(physicalDevice)),
+good(false) {
+	const_cast<str&> (name) = pDev.getProperties().deviceName.data();
+	static constexpr auto max = std::numeric_limits<uint32_t>::max();
+	auto graphicsFamilyQueueIndex{max};
+	auto transferFamilyQueueIndex{max};
+	uint8_t transferBits{std::numeric_limits<uint8_t>::max()};
+	const auto queueFamilyProperties = pDev.getQueueFamilyProperties();
+
+	for (size_t j = 0 ; j < queueFamilyProperties.size(); j++) {
+		constexpr auto graphicsFlags = vk::QueueFlagBits::eGraphics | vk::QueueFlagBits::eTransfer;
+		constexpr auto transferFlags = vk::QueueFlagBits::eTransfer;
+		const auto& queueFamily = queueFamilyProperties[j];
+		if (graphicsFamilyQueueIndex == max && queueFamily.queueFlags & graphicsFlags ) {
+			MDEBUG << name  << " Found graphics queue family " << to_str(queueFamily.queueFlags) << " index: " << j  << endl;
+			graphicsFamilyQueueIndex = j;
+		}
+		if (queueFamily.queueFlags & transferFlags && countBits(static_cast<uint32_t>(queueFamily.queueFlags)) < transferBits) {
+			transferFamilyQueueIndex = j;
+			transferBits = countBits(static_cast<uint32_t>(queueFamily.queueFlags));
+		}
+	}
+	if (graphicsFamilyQueueIndex == max) {
+		MWARN << "Could not find a queue family with graphics capabilities for device " << name << endl;
+		return;
+	}
+	const_cast<uint32_t&>(graphicsQueueFamilyIndex) = graphicsFamilyQueueIndex;
+	const_cast<uint32_t&>(transferQueueFamilyIndex) = transferFamilyQueueIndex;
+	MDEBUG << name << " Found transfer queue family " <<
+		to_str(queueFamilyProperties[transferFamilyQueueIndex].queueFlags) << " index: " << transferFamilyQueueIndex << endl;
+	std::unordered_set graphicsQueueFamilyIndex{graphicsFamilyQueueIndex, transferFamilyQueueIndex};
+
+	vec<vk::DeviceQueueCreateInfo> queueCreateInfos;
+	constexpr float queuePriority = 1.0f;
+	for (const auto& queueFamilyIndex : graphicsQueueFamilyIndex) {
+		queueCreateInfos.push_back({
+			.queueFamilyIndex = queueFamilyIndex,
+			.queueCount = 1,
+			.pQueuePriorities = &queuePriority
+		});
+	}
+
+	static constexpr  vk::PhysicalDeviceVulkan12Features deviceFeatures{
+		.timelineSemaphore = vk::True
+	};
+
+	const vk::DeviceCreateInfo deviceCreateInfo{
+		.pNext = &deviceFeatures,
+		.queueCreateInfoCount = queueCreateInfos.size32(),
+		.pQueueCreateInfos = queueCreateInfos.data(),
+		.enabledExtensionCount = extensions.size32(),
+		.ppEnabledExtensionNames = extensions.data()
+	};
+
+	auto result = pDev.createDevice(deviceCreateInfo);
+	if (!result.has_value()) {
+		MERROR << name << " Could not create device: " << to_str(result.error()) << endl;
+		return;
+	}
+	const_cast<id_t&>(id) = static_cast<id_t>(pDev.getProperties().deviceID);
+	dev = std::move(result.value());
+
+	for (const auto& j : graphicsQueueFamilyIndex) {
+		auto queue = dev.getQueue(j, 0);
+		if (!queue.has_value()) {
+			MERROR << name << " Could not get queue " << to_str(queue.error()) << endl;
+			return;
+		}
+		MDEBUG << name << " Got queue " << j << endl;
+		queues.emplace(j, std::move(queue.value()));
+	}
+	auto vertShader = createShaderModule(VERT_SHADER);
+	auto fragShader = createShaderModule(FRAG_SHADER);
+	if (!vertShader.has_value() || !fragShader.has_value()) {
+		MERROR << name << " Could not create shader modules" << endl;
+		return;
+	}
+	this->vertShader = std::move(vertShader.value());
+	this->fragShader = std::move(fragShader.value());
+	const_cast<bool&>(good) = true;
+	MDEBUG << name << " Created device " << endl;
+}

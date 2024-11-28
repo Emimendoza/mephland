@@ -35,22 +35,9 @@ static VKAPI_ATTR VkBool32 VKAPI_CALL debugCallback(
 
 }
 
-template <typename T>
-static constexpr uint8_t countBits(T bits) {
-	static_assert(std::numeric_limits<uint8_t>::max() > sizeof(T)*8);
-	uint8_t count = 0;
-	for(uint8_t i = 0; i < sizeof(T) * 8; i++) {
-		if(bits & 1)
-			count++;
-		bits <<= 1;
-	}
-	return count;
-}
-
-VInstance::VInstance(DRM_Handler::DRM_Paths drmDevs, const bool enableValidationLayers) :
-drmHandler(std::move(drmDevs)) {
+VInstance::VInstance(const bool enableValidationLayers, Backend& backend): backend(&backend) {
 	MDEBUG << "Creating Vulkan instance" << endl;
-	constexpr vk::ApplicationInfo appInfo{
+	static constexpr vk::ApplicationInfo appInfo{
 		.pApplicationName = "MephLand Compositor",
 		.applicationVersion = VK_MAKE_VERSION(0, 0, 0),
 		.pEngineName = "MephLand",
@@ -61,10 +48,11 @@ drmHandler(std::move(drmDevs)) {
 	vec<cstr> enabledLayerNames;
 	vec<cstr> enabledExtensionNames{
 		vk::KHRSurfaceExtensionName,
-		vk::KHRDisplayExtensionName,
-		vk::EXTDirectModeDisplayExtensionName,
-		vk::EXTAcquireDrmDisplayExtensionName
 	};
+
+	for (const auto& ext : backend.requiredInstanceExtensions()) {
+		enabledExtensionNames.push_back(ext);
+	}
 
 	// Optional stuff
 
@@ -82,13 +70,13 @@ drmHandler(std::move(drmDevs)) {
 		.ppEnabledExtensionNames = enabledExtensionNames.data()
 	};
 
-	auto inst = createInstance(createInfo);
-	if (inst.result != vk::Result::eSuccess) {
-		MERROR << "Failed to create Vulkan instance:" << to_str(inst.result) << endl;
+	auto inst = context.createInstance(createInfo);
+	if (!inst.has_value()) {
+		MERROR << "Failed to create Vulkan instance:" << to_str(inst.error()) << endl;
 		throw std::runtime_error("Failed to create Vulkan instance");
 	}
 
-	instance = {context, inst.value};
+	instance = std::move(inst.value());
 	MDEBUG << "Created Vulkan instance" << endl;
 	if (enableValidationLayers) {
 		vk::DebugUtilsMessengerCreateInfoEXT debugCreateInfo{
@@ -116,11 +104,13 @@ drmHandler(std::move(drmDevs)) {
 vec<VDevice::id_t> VInstance::refreshDevices() {
 	MDEBUG << "Reloading devices" << endl;
 	vec<VDevice::id_t> ret;
-
-	const vec<cstr> deviceExtensions{
-		vk::EXTPhysicalDeviceDrmExtensionName,
+	vec<cstr> deviceExtensions {
 		vk::KHRSwapchainExtensionName
 	};
+
+	for (const auto& ext : backend->requiredDeviceExtensions()) {
+		deviceExtensions.push_back(ext);
+	}
 
 	auto res = instance.enumeratePhysicalDevices();
 	if (!res.has_value()) {
@@ -129,8 +119,8 @@ vec<VDevice::id_t> VInstance::refreshDevices() {
 	}
 
 	for (auto& pDev : res.value()) {
-		const auto id = static_cast<VDevice::id_t>(pDev.getProperties().deviceID);
 		str name = pDev.getProperties().deviceName.data();
+		auto id = static_cast<VDevice::id_t>(pDev.getProperties().deviceID);
 		if (devices.contains(id)) {
 			MDEBUG << "Device " << name << " already exists" << endl;
 			continue;
@@ -152,13 +142,8 @@ vec<VDevice::id_t> VInstance::refreshDevices() {
 		if (!hasAllExtensions)
 			continue;
 
-		const auto devProps = pDev.getProperties2<vk::PhysicalDeviceProperties2, vk::PhysicalDeviceDrmPropertiesEXT>();
-		const auto drmProps = devProps.get<vk::PhysicalDeviceDrmPropertiesEXT>();
-		bool found_device = false;
-		if (!drmProps.hasPrimary) {
-			MDEBUG << "Device " << name << " does not have a primary node" << endl;
+		if (!deviceGood(pDev))
 			continue;
-		}
 
 		const auto devFeatures = pDev.getFeatures2<vk::PhysicalDeviceFeatures2, vk::PhysicalDeviceVulkan12Features>();
 		const auto vulkan12Features = devFeatures.get<vk::PhysicalDeviceVulkan12Features>();
@@ -167,117 +152,22 @@ vec<VDevice::id_t> VInstance::refreshDevices() {
 			continue;
 		}
 
-		DRM_Device::id_t DRMid;
-
-		for (const auto& drm_id : drmHandler.getDevices() | std::views::keys) {
-			if (drm_id.major == drmProps.primaryMajor && drm_id.minor == drmProps.primaryMinor) {
-				MDEBUG << "Found matching DRM device for " << name << endl;
-				found_device = true;
-				DRMid = drm_id;
-				break;
-			}
-		}
-		if (!found_device) {
-			MINFO << "No matching DRM device for " << name << endl;
+		auto devCreate = createDevice(std::move(pDev), deviceExtensions);
+		if (!devCreate.has_value()) {
+			MERROR << "Failed to create device " << name << endl;
 			continue;
 		}
-
-		constexpr auto max = std::numeric_limits<uint32_t>::max();
-		uint32_t graphicsFamilyQueueIndex{max};
-		uint32_t transferFamilyQueueIndex{max};
-		uint8_t transferBits{std::numeric_limits<uint8_t>::max()};
-
-		const auto queueFamilyProperties = pDev.getQueueFamilyProperties();
-
-		for (size_t j = 0 ; j < queueFamilyProperties.size(); j++) {
-			constexpr auto graphicsFlags = vk::QueueFlagBits::eGraphics | vk::QueueFlagBits::eTransfer;
-			constexpr auto transferFlags = vk::QueueFlagBits::eTransfer;
-			const auto& queueFamily = queueFamilyProperties[j];
-			if (graphicsFamilyQueueIndex == max && queueFamily.queueFlags & graphicsFlags ) {
-				MDEBUG << name  << " Found graphics queue family " << to_str(queueFamily.queueFlags) << endl;
-				graphicsFamilyQueueIndex = j;
-			}
-			if (queueFamily.queueFlags & transferFlags && countBits(static_cast<uint32_t>(queueFamily.queueFlags)) < transferBits) {
-				transferFamilyQueueIndex = j;
-				transferBits = countBits(static_cast<uint32_t>(queueFamily.queueFlags));
-			}
-		}
-		if (graphicsFamilyQueueIndex == max) {
-			MWARN << "Could not find a queue family with graphics capabilities for device " << name << endl;
-			continue;
-		}
-		MDEBUG << name << " Found transfer queue family " <<
-			to_str(queueFamilyProperties[transferFamilyQueueIndex].queueFlags) << endl;
-		std::unordered_set graphicsQueueFamilyIndex{graphicsFamilyQueueIndex, transferFamilyQueueIndex};
-
-		vec<vk::DeviceQueueCreateInfo> queueCreateInfos;
-		constexpr float queuePriority = 1.0f;
-		for (const auto& queueFamilyIndex : graphicsQueueFamilyIndex) {
-			queueCreateInfos.push_back({
-				.queueFamilyIndex = queueFamilyIndex,
-				.queueCount = 1,
-				.pQueuePriorities = &queuePriority
-			});
-		}
-
-		static constexpr  vk::PhysicalDeviceVulkan12Features deviceFeatures{
-			.timelineSemaphore = vk::True
-		};
-
-		const vk::DeviceCreateInfo deviceCreateInfo{
-			.pNext = &deviceFeatures,
-			.queueCreateInfoCount = queueCreateInfos.size32(),
-			.pQueueCreateInfos = queueCreateInfos.data(),
-			.enabledExtensionCount = deviceExtensions.size32(),
-			.ppEnabledExtensionNames = deviceExtensions.data()
-		};
-
-
-		auto result = pDev.createDevice(deviceCreateInfo);
-		if (!result.has_value()) {
-			MERROR << name << " Could not create device: " << to_str(result.error()) << endl;
-			continue;
-		}
-
-		auto dev_ptr = new VDevice(id, drmHandler.takeDevice(DRMid), (name.data()));
-		u_ptr<VDevice> udev(dev_ptr);
-		auto& dev = *dev_ptr;
-		const_cast<uint32_t&>(dev.graphicsQueueFamilyIndex) = graphicsFamilyQueueIndex;
-		const_cast<uint32_t&>(dev.transferQueueFamilyIndex) = transferFamilyQueueIndex;
-		dev.dev = std::move(result.value());
-		dev.pDev = std::move(pDev);
-		MDEBUG << name << " Created device " << endl;
-		bool cont = false;
-		for (const auto& j : graphicsQueueFamilyIndex) {
-			auto queue = dev.dev.getQueue(j, 0);
-			if (!queue.has_value()) {
-				MERROR << dev.name << " Could not get queue " << to_str(queue.error()) << endl;
-				cont = true;
-				break;
-			}
-			MDEBUG << dev.name << " Got queue " << j << endl;
-			dev.queues.emplace(j, std::move(queue.value()));
-		}
-		if (cont)
-			continue;
-		auto vertShader = dev.createShaderModule(VERT_SHADER);
-		auto fragShader = dev.createShaderModule(FRAG_SHADER);
-		if (!vertShader.has_value() || !fragShader.has_value()) {
-			MERROR << dev.name << " Could not create shader modules" << endl;
-			continue;
-		}
-
-		dev.vertShader = std::move(vertShader.value());
-		dev.fragShader = std::move(fragShader.value());
-		dev.parent = this;
-		devices.emplace(id, std::move(udev));
-		ret.push_back(id);
+		devices.emplace(id, std::move(devCreate.value()));
+		ret.emplace_back(std::move(id));
 	}
 	return ret;
 }
 
 VInstance::~VInstance() {
 	MDEBUG << "Destroying Vulkan instance" << endl;
+	devices.clear();
+	debugMessenger.clear();
+	instance.clear();
 }
 
 vkr::Context VInstance::context{};

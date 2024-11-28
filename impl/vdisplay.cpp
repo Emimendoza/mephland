@@ -1,8 +1,9 @@
-#include "vdisplay_impl.h"
+#include "vdisplay.h"
+#include "vdevice.h"
 
 using namespace mland;
 
-void VDisplay::impl::workerMain() {
+void VDisplay::workerMain() {
 	try {
 		createEverything();
 		std::unique_lock lock(stateMutex);
@@ -24,7 +25,7 @@ constexpr vk::CommandBufferBeginInfo begInf {
 	.flags = vk::CommandBufferUsageFlagBits::eOneTimeSubmit
 };
 
-void VDisplay::impl::transferBackground(const SyncObjs& sync, const Image& img) {
+void VDisplay::transferBackground(const SyncObjs& sync, const Image& img) {
 	const auto& cmd = img.backgroundCmd;
 	cmd.reset();
 	cmd.begin(begInf);
@@ -70,7 +71,7 @@ void VDisplay::impl::transferBackground(const SyncObjs& sync, const Image& img) 
 	vDev->submit(vDev->transferQueueFamilyIndex, submit);
 }
 
-void VDisplay::impl::drawFrame(const SyncObjs& sync, const Image& img) {
+void VDisplay::drawFrame(const SyncObjs& sync, const Image& img) {
 	const auto& cmd = img.graphicsCmd;
 	cmd.reset();
 	cmd.begin(begInf);
@@ -142,7 +143,7 @@ void VDisplay::impl::drawFrame(const SyncObjs& sync, const Image& img) {
 	vDev->submit(vDev->graphicsQueueFamilyIndex,submit, sync.inFlight);
 }
 
-void VDisplay::impl::present(const SyncObjs& sync, const Image& img, const uint32_t& imageIndex) {
+void VDisplay::present(const SyncObjs& sync, const Image& img, const uint32_t& imageIndex) {
 	const vk::PresentInfoKHR present {
 		.waitSemaphoreCount = 1,
 		.pWaitSemaphores = &*sync.renderFinished,
@@ -162,7 +163,7 @@ void VDisplay::impl::present(const SyncObjs& sync, const Image& img, const uint3
 }
 
 
-void VDisplay::impl::renderLoop() {
+void VDisplay::renderLoop() {
 	const auto syncIndex = getSyncObj();
 	const auto& sync = syncObjs[syncIndex];
 	auto [result, imageIndex] = swapchain.acquireNextImage(UINT64_MAX, sync.imageAvailable, nullptr);
@@ -193,7 +194,7 @@ void VDisplay::impl::renderLoop() {
 	present(sync, img, imageIndex);
 }
 
-bool VDisplay::impl::step() {
+bool VDisplay::step() {
 	switch (getState()) {
 	case eStop:
 		return false;

@@ -9,7 +9,7 @@ class Controller {
 
 public:
 	MCLASS(Controller);
-	Controller(u_ptr<VInstance>& instance);
+	Controller(u_ptr<VInstance>&& instance);
 	Controller(Controller&& other) noexcept = default;
 	Controller(const Controller&) = delete;
 	~Controller();
