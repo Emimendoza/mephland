@@ -24,13 +24,15 @@ if (USE_REFLECTION)
 endif()
 
 if (OPTIMIZE)
-	add_compile_options(-Os -flto=auto)
+	add_compile_options(-Os)
 endif()
 
 find_package(PkgConfig REQUIRED)
 find_package(Libdrm REQUIRED)
 
 pkg_check_modules(VULKAN REQUIRED vulkan)
+pkg_check_modules(WAYLAND_SERVER REQUIRED wayland-server)
+
 if (SDL_BACKEND)
 	add_compile_definitions(MLAND_SDL_BACKEND)
 	pkg_check_modules(SDL3 REQUIRED sdl3)
@@ -50,11 +52,13 @@ target_include_directories(mephland PRIVATE
 		${VULKAN_INCLUDE_DIRS}
 		${Libdrm_INCLUDE_DIRS}
 		${SDL3_INCLUDE_DIRS}
+		${WAYLAND_SERVER_INCLUDE_DIRS}
 )
 target_link_libraries(mephland PRIVATE
 		${VULKAN_LIBRARIES}
 		${Libdrm_LIBRARIES}
 		${SDL3_LIBRARIES}
+		${WAYLAND_SERVER_LIBRARIES}
 )
 
 add_custom_command(

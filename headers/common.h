@@ -48,7 +48,16 @@ public:
 	}
 
 	// ReSharper disable once CppNonExplicitConversionOperator
+	template <class U = T> requires std::same_as<std::string, U>
 	operator cstr() const { return T::c_str(); }
+	// ReSharper disable once CppNonExplicitConversionOperator
+	template <class U = T> requires std::same_as<std::string_view, U>
+	operator cstr() const { return T::data(); }
+
+	// ReSharper disable once CppNonExplicitConversionOperator
+	constexpr operator T&() { return *this; }
+	// ReSharper disable once CppNonExplicitConversionOperator
+	constexpr operator const T&() const { return *this; }
 
 	template <class U> requires std::same_as<std::string, T>
 	// ReSharper disable once CppNonExplicitConversionOperator
@@ -67,16 +76,10 @@ typedef str_like<std::string> str;
 typedef str_like<std::string_view> str_view;
 
 template <class T>
-std::ostream& operator<<(std::ostream& os, const str_like<T>& s) {
-	os << static_cast<const T&>(s);
-	return os;
-}
-
-template <class T>
 std::ostream& operator<<(std::ostream& os, const vec<T>& v);
 
 
-constexpr char endl = '\n';
+constexpr _details::endl_t endl{};
 
 template <class T>
 class u_ptr : public std::unique_ptr<T> {
@@ -129,7 +132,9 @@ using VDevice = Backend::VDevice;
 using VInstance = Backend::VInstance;
 struct VShader;
 class Controller;
+class WLServer;
 struct MState;
+
 }
 
 // ReSharper disable once CppUnusedIncludeDirective

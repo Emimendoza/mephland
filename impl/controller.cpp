@@ -4,29 +4,25 @@
 #include "vinstance.h"
 #include "vdisplay.h"
 #include "vulk.h"
+#include "wayalnd_server.h"
 using namespace mland;
 
 struct Controller::impl {
+	s_ptr<WLServer> server;
 	u_ptr<VInstance> instance;
 	vec<u_ptr<VDisplay>> displays{};
-	impl(u_ptr<VInstance>&& instance) : instance(std::move(instance)){}
+
+	impl(u_ptr<VInstance>&& instance, const s_ptr<WLServer>& server) : server(server), instance(std::move(instance)){}
 };
 
-Controller::Controller(u_ptr<VInstance>&& instance) {
-	p = std::make_unique<impl>(std::move(instance));
+Controller::Controller(u_ptr<VInstance>&& instance, const s_ptr<WLServer>& server) {
+	p = std::make_unique<impl>(std::move(instance), server);
 	MDEBUG << "Controller created" << endl;
 }
 
 Controller::~Controller() {
 	p.reset();
 	MDEBUG << "Controller destroyed" << endl;
-}
-
-// TODO: Remove this
-static volatile bool running = true;
-
-static void signal_handler(int signal) {
-	running = false;
 }
 
 void Controller::refreshMonitors() {
@@ -49,14 +45,8 @@ void Controller::refreshMonitors() {
 
 void Controller::run() {
 	MDEBUG << "Running controller" << endl;
-	refreshMonitors();
-	running = false;
-	std::signal(SIGINT, signal_handler);
-	while (running) {
-		VDisplay::requestRender();
-		refreshMonitors();
-		std::this_thread::yield();
-	}
+	//refreshMonitors();
+	p->server->waitForStop();
 }
 
 

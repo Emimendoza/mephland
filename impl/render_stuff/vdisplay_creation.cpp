@@ -1,5 +1,6 @@
 #include "vdisplay.h"
 #include "vinstance.h"
+#include "globals.h"
 
 // Here are non render function
 

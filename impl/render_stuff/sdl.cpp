@@ -1,6 +1,8 @@
+#include "wayalnd_server.h"
 #ifdef MLAND_SDL_BACKEND
 #include <SDL3/SDL_vulkan.h>
 #include <SDL3/SDL.h>
+#include <SDL3/SDL_events.h>
 #include "sdl_backend.h"
 
 using namespace mland;
@@ -8,7 +10,7 @@ using SdlVInstance = SdlBackend::SdlVInstance;
 using SdlDevice = SdlBackend::SdlVDevice;
 using SdlDisplay = SdlBackend::SdlVDisplay;
 
-SdlBackend::SdlBackend(const uint32_t maxWindows) {
+SdlBackend::SdlBackend(const uint32_t maxWindows, const s_ptr<WLServer>& server) : server(server) {
 	MDEBUG << "Creating SDL Backend" << endl;
 	static constexpr auto  windowName = "MephLand Compositor";
 	static constexpr auto  windowWidth = 800;
@@ -26,9 +28,26 @@ SdlBackend::SdlBackend(const uint32_t maxWindows) {
 		}
 		windows.push_back(window);
 	}
+	thread = std::thread(&SdlBackend::run, this);
+}
+
+void SdlBackend::run() {
+	MDEBUG << "Running SDL Backend" << endl;
+	while (true) {
+		SDL_Event event;
+		while (SDL_PollEvent(&event)) {
+			if (event.type == SDL_EVENT_QUIT) {
+				MDEBUG << "Received quit event" << endl;
+				server->stop();
+				return;
+			}
+		}
+	}
 }
 
 SdlBackend::~SdlBackend() {
+	if (thread.joinable())
+		thread.join();
 	for (const auto window : windows) {
 		SDL_DestroyWindow(window);
 	}

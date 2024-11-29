@@ -12,7 +12,7 @@ namespace mland {
 class SdlBackend final : public Backend {
 public:
 	MCLASS(SdlBackend);
-	SdlBackend(uint32_t maxWindows);
+	SdlBackend(uint32_t maxWindows, const s_ptr<WLServer>& server);
 	~SdlBackend() override;
 	class SdlVInstance;
 	class SdlVDevice;
@@ -25,7 +25,10 @@ public:
 	friend SdlVDevice;
 	friend SdlVDisplay;
 private:
+	void run();
 	vec<SDL_Window*> windows{};
+	s_ptr<WLServer> server{};
+	std::thread thread{};
 };
 
 class SdlBackend::SdlVInstance final : public VInstance {

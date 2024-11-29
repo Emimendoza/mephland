@@ -1,4 +1,6 @@
 #include "globals.h"
+
+#include "drm_backend.h"
 #include "mstate.h"
 using namespace mland;
 
@@ -11,9 +13,11 @@ static NullBuffer nullBuffer{};
 
 std::atomic<uint32_t> globals::bufferCount = 3;
 
-std::ostream globals::debug(&nullBuffer);
-std::ostream globals::info(&nullBuffer);
-std::ostream globals::warn(&nullBuffer);
-std::ostream globals::error(&nullBuffer);
+std::atomic_flag _details::msgMutex = ATOMIC_FLAG_INIT;
+
+std::ostream globals::debug{&nullBuffer};
+std::ostream globals::info{&nullBuffer};
+std::ostream globals::warn{&nullBuffer};
+std::ostream globals::error{&nullBuffer};
 
 MState globals::CompositorState;
