@@ -46,11 +46,13 @@ public:
 	void submit(uint32_t queueFamilyIndex, const vk::SubmitInfo& submitInfo, const vk::Fence& fence = nullFence);
 	vk::Result present(uint32_t queueFamilyIndex, const vk::PresentInfoKHR& presentInfo);
 
+	void waitIdle(uint32_t queueFamilyIndex);
+
 	opt<vkr::ShaderModule> createShaderModule(const VShader& shader);
 
 	constexpr const vkr::ShaderModule& getVert() const { return vertShader; }
 	constexpr const vkr::ShaderModule& getFrag() const { return fragShader; }
 
-	virtual vec<u_ptr<VDisplay>> updateMonitors() = 0;
+	virtual vec<s_ptr<VDisplay>> updateMonitors() = 0;
 };
 }

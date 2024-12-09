@@ -1,7 +1,6 @@
-#include "globals.h"
-
-#include "drm_backend.h"
-#include "mstate.h"
+#include "mland/globals.h"
+#include "mland/drm_backend.h"
+#include "mland/mstate.h"
 using namespace mland;
 
 class NullBuffer final : public std::streambuf {

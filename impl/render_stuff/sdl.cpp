@@ -1,10 +1,9 @@
-#include "wayalnd_server.h"
 #ifdef MLAND_SDL_BACKEND
 #include <SDL3/SDL_vulkan.h>
 #include <SDL3/SDL.h>
 #include <SDL3/SDL_events.h>
-#include "sdl_backend.h"
-
+#include "mland/sdl_backend.h"
+#include "mland/wayland_server.h"
 using namespace mland;
 using SdlVInstance = SdlBackend::SdlVInstance;
 using SdlDevice = SdlBackend::SdlVDevice;
@@ -33,19 +32,21 @@ SdlBackend::SdlBackend(const uint32_t maxWindows, const s_ptr<WLServer>& server)
 
 void SdlBackend::run() {
 	MDEBUG << "Running SDL Backend" << endl;
-	while (true) {
+	while (!stop.test()) {
 		SDL_Event event;
 		while (SDL_PollEvent(&event)) {
-			if (event.type == SDL_EVENT_QUIT) {
-				MDEBUG << "Received quit event" << endl;
+			if (event.type == SDL_EVENT_QUIT || event.type == SDL_EVENT_WINDOW_CLOSE_REQUESTED) {
+				MINFO << "Received quit event" << endl;
 				server->stop();
 				return;
 			}
 		}
+		std::this_thread::sleep_for(std::chrono::milliseconds(100));
 	}
 }
 
 SdlBackend::~SdlBackend() {
+	stop.test_and_set();
 	if (thread.joinable())
 		thread.join();
 	for (const auto window : windows) {
@@ -91,7 +92,7 @@ opt<u_ptr<VDevice>> SdlVInstance::createDevice(vkr::PhysicalDevice&& physicalDev
 SdlDevice::SdlVDevice(vkr::PhysicalDevice&& physicalDevice, const vec<cstr>& extensions, VInstance* parent) :
 VDevice(std::move(physicalDevice), extensions, parent) {}
 
-vec<u_ptr<VDisplay>> SdlDevice::updateMonitors() {
+vec<s_ptr<VDisplay>> SdlDevice::updateMonitors() {
 	MDEBUG << "Updating monitors for device " << name << endl;
 	auto& instance = static_cast<SdlVInstance&>(*parent);
 	auto& back = static_cast<SdlBackend&>(*instance.getBackend());
@@ -99,12 +100,12 @@ vec<u_ptr<VDisplay>> SdlDevice::updateMonitors() {
 	if (back.windows.size() == instance.taken.size()) [[likely]]
 		return {}; // No new windows
 
-	vec<u_ptr<VDisplay>> ret;
+	vec<s_ptr<VDisplay>> ret;
 	for (auto& window : back.windows) {
 		if (instance.taken.contains(window)) [[likely]]
 			continue;
 		instance.taken.insert(window);
-		ret.push_back(u_ptr<VDisplay>(new SdlDisplay(window, this)));
+		ret.push_back(s_ptr<VDisplay>(new SdlDisplay(window, this)));
 	}
 	return ret;
 }

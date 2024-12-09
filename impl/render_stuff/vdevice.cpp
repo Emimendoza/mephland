@@ -1,13 +1,13 @@
-#include "vdevice.h"
-#include "vdisplay.h"
-#include "vshaders.h"
+#include "mland/vdevice.h"
+#include "mland/vdisplay.h"
+#include "mland/vshaders.h"
 using namespace mland;
 
 template <typename T>
 static constexpr uint8_t countBits(T bits) {
 	static_assert(std::numeric_limits<uint8_t>::max() > sizeof(T)*8);
 	uint8_t count = 0;
-	for(uint8_t i = 0; i < sizeof(T) * 8; i++) {
+	for(uint8_t i = 0; i < sizeof(T) * 8; i++) { // NOLINT(*-too-small-loop-variable)
 		if(bits & 1)
 			count++;
 		bits <<= 1;
@@ -70,6 +70,11 @@ vk::Result VDevice::present(const uint32_t queueFamilyIndex, const vk::PresentIn
 	return queue.presentKHR(presentInfo);
 }
 
+void VDevice::waitIdle(const uint32_t queueFamilyIndex) {
+	auto& [mutex, queue] = queues.at(queueFamilyIndex);
+	queue.waitIdle();
+}
+
 VDevice::VDevice(vkr::PhysicalDevice&& physicalDevice, const vec<cstr>& extensions, VInstance* parent) :
 parent(parent),
 pDev(std::move(physicalDevice)),
@@ -102,7 +107,7 @@ good(false) {
 	const_cast<uint32_t&>(transferQueueFamilyIndex) = transferFamilyQueueIndex;
 	MDEBUG << name << " Found transfer queue family " <<
 		to_str(queueFamilyProperties[transferFamilyQueueIndex].queueFlags) << " index: " << transferFamilyQueueIndex << endl;
-	std::unordered_set graphicsQueueFamilyIndex{graphicsFamilyQueueIndex, transferFamilyQueueIndex};
+	set graphicsQueueFamilyIndex{graphicsFamilyQueueIndex, transferFamilyQueueIndex};
 
 	vec<vk::DeviceQueueCreateInfo> queueCreateInfos;
 	constexpr float queuePriority = 1.0f;

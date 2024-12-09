@@ -4,6 +4,7 @@
 
 #include "common.h"
 
+
 namespace mland {
 
 class WLServer {
@@ -17,13 +18,17 @@ public:
 	void stop();
 	void waitForStop();
 
+	wl_display* getDisplay() const { return display_; }
+
 private:
+	friend Controller;
 	void run();
-	std::atomic_flag stop_ = ATOMIC_FLAG_INIT;
-	std::atomic_flag stopped_ = ATOMIC_FLAG_INIT;
 	wl_display* display_{nullptr};
 	const char* socket_{nullptr};
 	std::thread thread_{};
+
+	std::atomic_flag stop_ = ATOMIC_FLAG_INIT;
+	std::atomic_flag stopped_ = ATOMIC_FLAG_INIT;
 };
 
 }

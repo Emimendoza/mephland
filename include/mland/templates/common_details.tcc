@@ -1,6 +1,6 @@
 #pragma once
 #include <atomic>
-#include "globals.h"
+#include "../globals.h"
 #ifdef MLAND_USE_REFLECTION
 #warning "Reflection is not implemented"
 #include <experimental/reflect>
@@ -17,12 +17,14 @@ static constexpr auto MName = mland::_details::pad_str<PAD_LENGTH>(mland::_detai
 
 namespace mland::_details {
 constexpr size_t PAD_LENGTH = 15;
-constexpr size_t LOG_LENGTH = 5;
-constexpr char DEBUG[LOG_LENGTH + 1] = "[DEB]";
-constexpr char INFO[LOG_LENGTH + 1] = "[INF]";
-constexpr char WARN[LOG_LENGTH + 1] = "[WRN]";
-constexpr char ERROR[LOG_LENGTH + 1] = "[ERR]";
+constexpr char DEBUG[] = "[DEB]";
+constexpr char INFO[] = "[INF]";
+constexpr char WARN[] = "[WRN]";
+constexpr char ERROR[] = "[ERR]";
 
+static_assert(sizeof(DEBUG) == sizeof(INFO) && sizeof(INFO) == sizeof(WARN) && sizeof(WARN) == sizeof(ERROR), "All log levels must have the same length");
+
+constexpr size_t LOG_LENGTH = sizeof(DEBUG) - 1;
 template <size_t N>
 constexpr std::array<char, N + 1> pad_str(std::string_view str) {
 	std::array<char, N + 1> result{};

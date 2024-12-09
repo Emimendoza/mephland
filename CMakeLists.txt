@@ -41,14 +41,14 @@ else ()
 	set(SDL3_INCLUDE_DIRS "")
 endif()
 file(GLOB_RECURSE SOURCES "impl/*.cpp")
-file(GLOB_RECURSE HEADERS "headers/*.h")
+file(GLOB_RECURSE HEADERS "include/*.h")
 file(GLOB_RECURSE TEMPLATES "headers/*.tcc")
 file(GLOB_RECURSE C_SOURCES "impl/*.c")
 
 add_executable(mephland ${SOURCES} ${HEADERS} ${TEMPLATES} ${C_SOURCES})
 
 target_include_directories(mephland PRIVATE
-		headers
+		include
 		${VULKAN_INCLUDE_DIRS}
 		${Libdrm_INCLUDE_DIRS}
 		${SDL3_INCLUDE_DIRS}

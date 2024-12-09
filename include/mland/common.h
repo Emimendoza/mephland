@@ -6,6 +6,7 @@
 #include <string_view>
 #include <unordered_map>
 #include <ostream>
+#include <unordered_set>
 
 #include "templates/common_details.tcc"
 
@@ -104,12 +105,13 @@ public:
 	// ReSharper disable once CppNonExplicitConversionOperator
 	constexpr operator const T&() const { return *this->get(); }
 };
-
+// Aliases for common types
 template <typename T1, typename T2>
 using map = std::unordered_map<T1, T2>;
 template <typename T>
 using opt = std::optional<T>;
-
+template <typename T>
+using set = std::unordered_set<T>;
 // Forward declaration of all classes
 
 class Backend {
@@ -134,8 +136,9 @@ struct VShader;
 class Controller;
 class WLServer;
 struct MState;
-
 }
 
+// ReSharper disable once CppUnusedIncludeDirective
+#include "interfaces.h"
 // ReSharper disable once CppUnusedIncludeDirective
 #include "templates/common_impl.tcc"

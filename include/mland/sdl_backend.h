@@ -29,6 +29,7 @@ private:
 	vec<SDL_Window*> windows{};
 	s_ptr<WLServer> server{};
 	std::thread thread{};
+	std::atomic_flag stop = ATOMIC_FLAG_INIT;
 };
 
 class SdlBackend::SdlVInstance final : public VInstance {
@@ -39,7 +40,7 @@ protected:
 	opt<u_ptr<VDevice>> createDevice(vkr::PhysicalDevice&& physicalDevice, const vec<cstr>& extensions) override;
 private:
 	SdlVInstance(bool enableValidationLayers, SdlBackend& backend);
-	std::unordered_set<SDL_Window*> taken{};
+	set<SDL_Window*> taken{};
 	friend SdlBackend;
 	friend SdlVDevice;
 	friend SdlVDisplay;
@@ -49,7 +50,7 @@ class SdlBackend::SdlVDevice final : public VDevice {
 	friend SdlVDisplay;
 public:
 	MCLASS(SdlVDevice);
-	vec<u_ptr<VDisplay>> updateMonitors() override;
+	vec<s_ptr<VDisplay>> updateMonitors() override;
 protected:
 	friend SdlVInstance;
 	SdlVDevice(vkr::PhysicalDevice&& physicalDevice, const vec<cstr>& extensions, VInstance* parent);

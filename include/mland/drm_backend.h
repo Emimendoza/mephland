@@ -108,17 +108,17 @@ public:
 	DrmVDevice(const DrmVDevice&) = delete;
 	DrmVDevice(DrmVDevice&&) = delete;
 
-	opt<u_ptr<DrmVDisplay>> getDrmDisplay(DrmDevice::Connector con);
+	opt<s_ptr<DrmVDisplay>> getDrmDisplay(DrmDevice::Connector con);
 	constexpr const DrmDevice& getDRMDevice() const { return drmDev; }
 
-	vec<u_ptr<VDisplay>> updateMonitors() override;
+	vec<s_ptr<VDisplay>> updateMonitors() override;
 
 private:
 	friend DrmVInstance;
 	friend DrmVDisplay;
 	DrmVDevice(vkr::PhysicalDevice&& physicalDevice, const vec<cstr>& extensions, DrmVInstance* parent);
 	DrmDevice drmDev{nullptr};
-	std::unordered_set<DrmDevice::Connector> connectors{};
+	set<DrmDevice::Connector> connectors{};
 };
 
 class DrmBackend::DrmVDisplay final : public VDisplay {

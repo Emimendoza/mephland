@@ -1,11 +1,11 @@
 #include <iostream>
 #include <cstdlib>
 
-#include "controller.h"
-#include "drm_backend.h"
-#include "sdl_backend.h"
-#include "wayalnd_server.h"
-#include "env.h"
+#include "mland/controller.h"
+#include "mland/drm_backend.h"
+#include "mland/sdl_backend.h"
+#include "mland/wayland_server.h"
+#include "mland/env.h"
 
 
 MCLASS(Main);

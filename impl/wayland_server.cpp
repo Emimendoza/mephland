@@ -1,5 +1,4 @@
-#include "wayalnd_server.h"
-
+#include "mland/wayland_server.h"
 
 using namespace mland;
 
@@ -52,4 +51,7 @@ void WLServer::run() {
 	stopped_.test_and_set();
 	stopped_.notify_all();
 }
+
+
+
 

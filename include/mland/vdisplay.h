@@ -5,6 +5,7 @@
 #include "common.h"
 #include "vdevice.h"
 #include "vulk.h"
+#include "interfaces/output.h"
 
 namespace mland {
 class Backend::VDisplay {
@@ -27,9 +28,11 @@ public:
 		eUpdateBackground,
 		// Errors and cleanup
 		eSubOptimal = std::numeric_limits<uint64_t>::max() / 2, // Potentially recoverable
+		eSwapOutOfDate,
 		eError, // Unrecoverable
-		eStop = std::numeric_limits<uint64_t>::max()-1,
-		eStopped = std::numeric_limits<uint64_t>::max()
+		eStop = std::numeric_limits<uint64_t>::max()-2,
+		eStopped,
+		eJoined
 	};
 
 	VDisplay(VDisplay&& other) = delete;
@@ -42,11 +45,14 @@ public:
 	static vk::SurfaceFormatKHR bestFormat(const vec<vk::SurfaceFormatKHR>& formatPool, bool HDR);
 	static void requestRender();
 
+	std::condition_variable stateCond{};
 	bool isGood();
 
-	void setState(State state);
+	// Defined in interfaces::Output
+	void bindToWayland(const WLServer& server);
 
 protected:
+	friend interfaces::Output;
 	friend VDevice;
 	VDisplay(str&& name, VDevice* vDev) : name(std::move(name)), vDev(vDev) {}
 	// <Rendered, Signal, Device>
@@ -69,14 +75,19 @@ protected:
 		vkr::Semaphore imageAvailable;
 		vkr::Semaphore backgroundFinished;
 		vkr::Semaphore renderFinished;
-		vkr::Fence inFlight;
+		vkr::Fence renderFinishedFence;
+		vkr::Fence presented;
 		SyncObjs(const VDisplay& us);
+		SyncObjs(SyncObjs&&) = default;
+		~SyncObjs() = default;
 	};
 
 	str name;
+	VkExtent2D size{};
 	State state{ePreInit};
 	std::mutex stateMutex{};
-	std::condition_variable stateCond{};
+
+	std::chrono::time_point<std::chrono::system_clock> startTime{};
 	// Assets
 	vkr::Image background{nullptr};
 	vkr::Semaphore backgroundSemaphore{nullptr};
@@ -90,7 +101,9 @@ protected:
 	vk::SurfaceKHR surface{nullptr};
 	vkr::SwapchainKHR swapchain{nullptr};
 	vk::Rect2D displayRegion{};
+	std::mutex extentMutex{};
 	vk::Extent2D extent{};
+
 	vk::Format format{};
 	vec<Image> images{};
 	vkr::PipelineLayout pipelineLayout{nullptr};
@@ -105,17 +118,22 @@ protected:
 	vkr::CommandPool transferPool{nullptr};
 	std::stack<uint32_t> freeSyncObjs{};
 	map<uint32_t, uint32_t> busySyncObjs{};
+	u_ptr<interfaces::Output> output;
 
 
 	void createEverything();
 	void createTimeLineSemaphores();
 	void createCommandPools();
 	virtual void createSurface() = 0;
+	void createSwapchain();
 	void createSwapchain(vk::PresentModeKHR presentMode, vk::SurfaceFormatKHR);
 	void createPipelineLayout();
 	void createRenderPass();
 	void createRenderPipeline();
 	void createFramebuffers();
+
+	// Defined in interfaces::Output
+	void updateOutput();
 
 	void start();
 	void stop();
@@ -125,18 +143,22 @@ protected:
 	virtual void deleteSurface() = 0;
 	void cleanup();
 
+	void requestRenderForUs();
 
 	// Within renderLoop
 	void transferBackground(const SyncObjs& sync, const Image& img);
 	void drawFrame(const SyncObjs& sync, const Image& img);
-	void present(const SyncObjs& sync, const Image& img, const uint32_t& imageIndex);
+	bool present(const SyncObjs& sync, const uint32_t& imageIndex);
 
 	uint32_t getSyncObj();
-	void waitFence(const vkr::Fence& fence) const;
+	bool waitFence(const vkr::Fence& fence);
 	State getState();
 
 	// Helpers
 	vkr::Semaphore createSem() const;
 	vkr::Fence createFence() const;
+	bool waitImage(uint32_t imageIndex);
+	bool waitSync(const SyncObjs& sync);
+
 };
 }

@@ -5,7 +5,7 @@
 #include <filesystem>
 #include <sys/sysmacros.h>
 
-#include "drm_backend.h"
+#include "mland/drm_backend.h"
 using namespace mland;
 using DrmDevice = DrmBackend::DrmDevice;
 
@@ -194,7 +194,7 @@ DrmBackend::DrmVDisplay::~DrmVDisplay() {
 	static_cast<DrmVDevice&>(*vDev).connectors.erase(con);
 }
 
-opt<u_ptr<DrmBackend::DrmVDisplay>> DrmBackend::DrmVDevice::getDrmDisplay(const DrmDevice::Connector con) {
+opt<s_ptr<DrmBackend::DrmVDisplay>> DrmBackend::DrmVDevice::getDrmDisplay(const DrmDevice::Connector con) {
 	auto res = pDev.getDrmDisplayEXT(drmDev.getFd(), con);
 	if (!res.has_value()) {
 		MERROR << "Failed to get display for connector: " << to_str(res.error()) << endl;
@@ -218,13 +218,14 @@ opt<u_ptr<DrmBackend::DrmVDisplay>> DrmBackend::DrmVDevice::getDrmDisplay(const 
 		MERROR << name << " Display is not good" << endl;
 		return std::nullopt;
 	}
+	display->size = displayProps.physicalDimensions;
 
 	MDEBUG << name << " Created display for connector " << con << endl;
-	return std::make_optional(u_ptr<DrmVDisplay>(display));
+	return std::make_optional(s_ptr<DrmVDisplay>(display));
 }
 
-vec<u_ptr<VDisplay>> DrmBackend::DrmVDevice::updateMonitors() {
-	vec<u_ptr<VDisplay>> ret;
+vec<s_ptr<VDisplay>> DrmBackend::DrmVDevice::updateMonitors() {
+	vec<s_ptr<VDisplay>> ret;
 	const auto cons = drmDev.refreshConnectors();
 	MDEBUG << "Updating monitors for device " << name << endl;
 	for (const auto& con : cons) {

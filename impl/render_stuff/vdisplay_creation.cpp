@@ -1,6 +1,8 @@
-#include "vdisplay.h"
-#include "vinstance.h"
-#include "globals.h"
+#include <mutex>
+
+#include "mland/vdisplay.h"
+#include "mland/vinstance.h"
+#include "mland/globals.h"
 
 // Here are non render function
 
@@ -11,19 +13,30 @@ void VDisplay::start() {
 }
 
 void VDisplay::stop() {
+	bool weAreStopping = false;
 	{
 		std::lock_guard lock(stateMutex);
+		if (state < eStop) {
+			MDEBUG << name << " Stopping display" << endl;
+			state = eStop;
+			stateCond.notify_all();
+			weAreStopping = true;
+		}
+	}
+	std::unique_lock lock(stateMutex);
+	if (!weAreStopping) {
+		stateCond.wait(lock, [this] { return state == eJoined; });
+		return;
+	}
+	stateCond.wait(lock, [this] {
 		if (state == eStopped)
-			return;
-	}
-	MDEBUG << name << " Stopping display" << endl;
-	{
-		std::lock_guard lock(stateMutex);
-		state = eStop;
-	}
+			return true;
+		requestRenderForUs();
+		return false;
+	});
 	thread.join();
-	std::lock_guard lock(stateMutex);
-	state = eStopped;
+	state = eJoined;
+	stateCond.notify_all();
 }
 
 VDisplay::~VDisplay() {
@@ -71,6 +84,14 @@ void VDisplay::createEverything() {
 	createTimeLineSemaphores();
 	createCommandPools();
 	createSurface();
+	createSwapchain();
+	createPipelineLayout();
+	createRenderPass();
+	createRenderPipeline();
+	createFramebuffers();
+}
+
+void VDisplay::createSwapchain() {
 	const vec format = vDev->pDev.getSurfaceFormatsKHR(surface);
 	const vec presentModes = vDev->pDev.getSurfacePresentModesKHR(surface);
 	auto presentMode = presentModes[0];
@@ -82,10 +103,7 @@ void VDisplay::createEverything() {
 		}
 	}
 	createSwapchain(presentMode, bestFormat(format, renderingMode & eHDR));
-	createPipelineLayout();
-	createRenderPass();
-	createRenderPipeline();
-	createFramebuffers();
+	updateOutput();
 }
 
 void VDisplay::createTimeLineSemaphores() {
@@ -105,16 +123,13 @@ void VDisplay::createTimeLineSemaphores() {
 	const s_ptr newSemaphores = std::make_shared<DisplaySemaphores>(*timelineSemaphores);
 	newSemaphores->emplace_back(timelineSemaphore);
 	timelineSemaphores = newSemaphores;
-
 }
-
-
 
 void VDisplay::createSwapchain(const vk::PresentModeKHR presentMode, const vk::SurfaceFormatKHR format) {
 	MDEBUG << name << " Creating swapchain " << endl;
 	const auto surfaceCaps = vDev->pDev.getSurfaceCapabilitiesKHR(surface);
 	assert(surfaceCaps.currentExtent.height > 0 && surfaceCaps.currentExtent.width > 0);
-	static constexpr vk::ImageUsageFlags usage =
+	constexpr vk::ImageUsageFlags usage =
 			vk::ImageUsageFlagBits::eColorAttachment |
 			vk::ImageUsageFlagBits::eTransferDst;
 	auto& imageCount = globals::bufferCount;
@@ -124,6 +139,8 @@ void VDisplay::createSwapchain(const vk::PresentModeKHR presentMode, const vk::S
 	else if (surfaceCaps.maxImageCount > 0 && imageCount > surfaceCaps.maxImageCount)
 		imageCount = surfaceCaps.maxImageCount;
 
+	vkr::SwapchainKHR oldSwapchain = std::move(swapchain);
+	swapchain.clear();
 	const vk::SwapchainCreateInfoKHR swapchainInfo {
 		.flags = {}, // Unused
 		.surface = surface,
@@ -140,12 +157,13 @@ void VDisplay::createSwapchain(const vk::PresentModeKHR presentMode, const vk::S
 		.compositeAlpha = vk::CompositeAlphaFlagBitsKHR::eOpaque,
 		.presentMode = presentMode,
 		.clipped = true,
-		.oldSwapchain = swapchain
+		.oldSwapchain = oldSwapchain
 	};
 
 	auto res = vDev->dev.createSwapchainKHR(swapchainInfo);
 	if (!res.has_value()) [[unlikely]]
 		throw std::runtime_error(name + " Failed to create swapchain: " + to_str(res.error()));
+	oldSwapchain.clear();
 	swapchain = std::move(res.value());
 	extent = surfaceCaps.currentExtent;
 	this->format = format.format;
@@ -154,7 +172,7 @@ void VDisplay::createSwapchain(const vk::PresentModeKHR presentMode, const vk::S
 void VDisplay::createPipelineLayout() {
 	MDEBUG << name << " Creating pipeline layout" << endl;
 	// TODO: Use uniform buffers
-	static constexpr vk::PipelineLayoutCreateInfo layout {
+	constexpr vk::PipelineLayoutCreateInfo layout {
 	};
 	auto res = vDev->dev.createPipelineLayout(layout);
 	if (!res.has_value()) [[unlikely]]
@@ -170,11 +188,13 @@ void VDisplay::createRenderPass() {
 	attachments.push_back({
 		.format = format,
 		.samples = vk::SampleCountFlagBits::e1, // TODO: Implement anti-aliasing
-		.loadOp = vk::AttachmentLoadOp::eLoad,
+		//.loadOp = vk::AttachmentLoadOp::eLoad,
+		.loadOp = vk::AttachmentLoadOp::eClear,
 		.storeOp = vk::AttachmentStoreOp::eStore,
 		.stencilLoadOp = vk::AttachmentLoadOp::eDontCare, // Maybe implement stencil buffer if depth buffer is implemented
 		.stencilStoreOp = vk::AttachmentStoreOp::eDontCare,
-		.initialLayout = vk::ImageLayout::eTransferDstOptimal,
+		//.initialLayout = vk::ImageLayout::eTransferDstOptimal, // TODO: Implement background image
+		.initialLayout = vk::ImageLayout::eUndefined,
 		.finalLayout = vk::ImageLayout::ePresentSrcKHR
 	});
 	attachmentRefs.push_back({
@@ -261,7 +281,7 @@ void VDisplay::createRenderPipeline() {
 		.attachmentCount = 1,
 		.pAttachments = &colorBlendAttachment
 	};
-	static constexpr  std::array dynamicStates {
+	constexpr std::array dynamicStates {
 		vk::DynamicState::eViewport,
 		vk::DynamicState::eScissor
 	};
@@ -309,7 +329,8 @@ void VDisplay::createCommandPools() {
 
 bool VDisplay::isGood() {
 	std::unique_lock lock(stateMutex);
-	stateCond.wait(lock, [this] { return state > ePreInit; });
+	if (state == ePreInit)
+		stateCond.wait(lock, [this] { return state > ePreInit; });
 	return state < eError;
 }
 
@@ -326,32 +347,39 @@ void VDisplay::cleanup() {
 		}
 		timelineSemaphores = newSemaphores;
 	}
-	images.clear();
-	syncObjs.clear();
-	pipeline.clear();
-	pipelineLayout.clear();
-	renderPass.clear();
-	graphicsPool.clear();
-	swapchain.clear();
-	deleteSurface();
 	while (oldSemaphores.use_count() > 1) {
 		// waiting for other threads to stop using our semaphore
 		std::this_thread::yield();
 	}
-}
+	oldSemaphores.reset();
+	while (timelineSemaphore.use_count() > 1) {
+		std::this_thread::yield();
+	}
+	for (const auto& val : busySyncObjs | std::views::values) {
+		const std:: array fences = {
+			*syncObjs[val].renderFinishedFence,
+			*syncObjs[val].presented
+		};
+		while (true) {
+			constexpr uint64_t waitTime = 1e8;
+			const auto res = vDev->dev.waitForFences(fences, true, waitTime);
+			if (res == vk::Result::eSuccess) {
+				break;
+			}
+			requestRenderForUs();
+		}
+	}
 
-void VDisplay::setState(const State state) {
-	const auto mask = eIdle | eStop | state;
-	std::unique_lock lock(stateMutex);
-	stateCond.wait(lock, [this, mask]{return (this->state & mask) != 0; });
-	if (this->state & state) {
-		return; // Already in the desired state
-	}
-	if (this->state & eStop) {
-		MERROR << name << " Display is stopped" << endl;
-		return;
-	}
-	this->state = state;
+	syncObjs.clear();
+	images.clear();
+	timelineSemaphore.reset();
+	pipeline.clear();
+	renderPass.clear();
+	pipelineLayout.clear();
+	swapchain.clear();
+	transferPool.clear();
+	graphicsPool.clear();
+	deleteSurface();
 }
 
 VDisplay::State VDisplay::getState() {
@@ -363,6 +391,9 @@ void VDisplay::requestRender() {
 	volatile auto semaphores = timelineSemaphores;
 	for (const auto& sem : *const_cast<s_ptr<DisplaySemaphores>&>(semaphores)) {
 		const auto& [renderedSem, signalSem, device] = *sem;
+		if (renderedSem.getCounterValue() == signalSem.getCounterValue()) {
+			continue;
+		}
 		const vk::SemaphoreSignalInfo signalInfo {
 			.semaphore = signalSem,
 			.value = renderedSem.getCounterValue()
@@ -371,6 +402,17 @@ void VDisplay::requestRender() {
 	}
 }
 
+void VDisplay::requestRenderForUs() {
+	const auto& [renderedSem, signalSem, device] = *timelineSemaphore;
+	if (renderedSem.getCounterValue() == signalSem.getCounterValue()) {
+		return;
+	}
+	const vk::SemaphoreSignalInfo signalInfo {
+		.semaphore = signalSem,
+		.value = renderedSem.getCounterValue()
+	};
+	device->dev.signalSemaphore(signalInfo);
+}
 
 std::mutex VDisplay::timelineMutex{};
 s_ptr<VDisplay::DisplaySemaphores> VDisplay::timelineSemaphores = std::make_shared<DisplaySemaphores>();

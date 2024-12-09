@@ -1,9 +1,8 @@
 #define MLAND_VINSTANCE_IMPL
 #include <unordered_set>
-#include "vulk.h"
-#include "vinstance.h"
-#include "vshaders.h"
-#include "globals.h"
+#include "mland/vulk.h"
+#include "mland/vinstance.h"
+#include "mland/globals.h"
 
 
 using namespace mland;
@@ -48,6 +47,8 @@ VInstance::VInstance(const bool enableValidationLayers, Backend& backend): backe
 	vec<cstr> enabledLayerNames;
 	vec<cstr> enabledExtensionNames{
 		vk::KHRSurfaceExtensionName,
+		vk::KHRGetSurfaceCapabilities2ExtensionName,
+		vk::EXTSurfaceMaintenance1ExtensionName
 	};
 
 	for (const auto& ext : backend.requiredInstanceExtensions()) {
@@ -105,7 +106,9 @@ vec<VDevice::id_t> VInstance::refreshDevices() {
 	MDEBUG << "Reloading devices" << endl;
 	vec<VDevice::id_t> ret;
 	vec<cstr> deviceExtensions {
-		vk::KHRSwapchainExtensionName
+		vk::KHRSwapchainExtensionName,
+		vk::EXTSwapchainMaintenance1ExtensionName
+
 	};
 
 	for (const auto& ext : backend->requiredDeviceExtensions()) {
@@ -158,7 +161,7 @@ vec<VDevice::id_t> VInstance::refreshDevices() {
 			continue;
 		}
 		devices.emplace(id, std::move(devCreate.value()));
-		ret.emplace_back(std::move(id));
+		ret.push_back(id);
 	}
 	return ret;
 }
