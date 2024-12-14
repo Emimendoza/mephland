@@ -103,15 +103,15 @@ good(false) {
 		MWARN << "Could not find a queue family with graphics capabilities for device " << name << endl;
 		return;
 	}
-	const_cast<uint32_t&>(graphicsQueueFamilyIndex) = graphicsFamilyQueueIndex;
-	const_cast<uint32_t&>(transferQueueFamilyIndex) = transferFamilyQueueIndex;
+	const_cast<uint32_t&>(graphicsIndex) = graphicsFamilyQueueIndex;
+	const_cast<uint32_t&>(transferIndex) = transferFamilyQueueIndex;
 	MDEBUG << name << " Found transfer queue family " <<
 		to_str(queueFamilyProperties[transferFamilyQueueIndex].queueFlags) << " index: " << transferFamilyQueueIndex << endl;
-	set graphicsQueueFamilyIndex{graphicsFamilyQueueIndex, transferFamilyQueueIndex};
+	set graphicsIndex{graphicsFamilyQueueIndex, transferFamilyQueueIndex};
 
 	vec<vk::DeviceQueueCreateInfo> queueCreateInfos;
 	constexpr float queuePriority = 1.0f;
-	for (const auto& queueFamilyIndex : graphicsQueueFamilyIndex) {
+	for (const auto& queueFamilyIndex : graphicsIndex) {
 		queueCreateInfos.push_back({
 			.queueFamilyIndex = queueFamilyIndex,
 			.queueCount = 1,
@@ -136,10 +136,10 @@ good(false) {
 		MERROR << name << " Could not create device: " << to_str(result.error()) << endl;
 		return;
 	}
-	const_cast<id_t&>(id) = static_cast<id_t>(pDev.getProperties().deviceID);
+	const_cast<Id_t&>(id) = static_cast<Id_t>(pDev.getProperties().deviceID);
 	dev = std::move(result.value());
 
-	for (const auto& j : graphicsQueueFamilyIndex) {
+	for (const auto& j : graphicsIndex) {
 		auto queue = dev.getQueue(j, 0);
 		if (!queue.has_value()) {
 			MERROR << name << " Could not get queue " << to_str(queue.error()) << endl;

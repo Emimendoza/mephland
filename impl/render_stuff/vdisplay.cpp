@@ -1,3 +1,4 @@
+#include <iomanip>
 #include "mland/vdisplay.h"
 #include "mland/vdevice.h"
 
@@ -16,13 +17,14 @@ void VDisplay::workerMain() {
 		stateCond.notify_all();
 		return;
 	}
-	startTime = std::chrono::system_clock::now();
+	const auto startTime = std::chrono::steady_clock::now();
 	while (step()) {}
-	const auto end = std::chrono::system_clock::now();
+	const auto end = std::chrono::steady_clock::now();
 	const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(end - startTime).count();
-	const auto frames = std::get<0>(*timelineSemaphore).getCounterValue();
-	const auto fps = static_cast<double>(frames) / (elapsed / 1000.0);
-	MINFO << name << " Rendered " << frames << " frames in " << elapsed << "ms (" << fps << "fps)" << endl;
+	const auto fps = static_cast<double>(framesRendered) / (elapsed / 1000.0);
+	MINFO << name << " Rendered " << framesRendered << " frames in "  << elapsed
+		  << "ms (" << std::setprecision(2) << std::fixed << fps << " fps)" << endl;
+
 	cleanup();
 	std::unique_lock lock(stateMutex);
 	stateCond.wait(lock, [this] { return state == eStop; });
@@ -77,7 +79,7 @@ void VDisplay::transferBackground(const SyncObjs& sync, const Image& img) {
 		.signalSemaphoreCount = 1,
 		.pSignalSemaphores = &*sync.backgroundFinished
 	};
-	vDev->submit(vDev->transferQueueFamilyIndex, submit);
+	vDev->submit(vDev->transferIndex, submit);
 }
 
 void VDisplay::drawFrame(const SyncObjs& sync, const Image& img) {
@@ -119,40 +121,15 @@ void VDisplay::drawFrame(const SyncObjs& sync, const Image& img) {
 	const std::array waitSemaphores = {
 		//*sync.backgroundFinished,
 		*sync.imageAvailable, // Temporary until background image is implemented
-		*std::get<0>(*timelineSemaphore), // To render one frame at a time
-		*std::get<1>(*timelineSemaphore), // Used by windows to signal to render
-
 	};
 	const std::array signalSemaphores = {
 		*sync.renderFinished,
-		*std::get<0>(*timelineSemaphore),
 	};
-	constexpr std::array<vk::PipelineStageFlags, 3> waitStages = {
-		vk::PipelineStageFlagBits::eColorAttachmentOutput,
-		vk::PipelineStageFlagBits::eColorAttachmentOutput,
-		vk::PipelineStageFlagBits::eColorAttachmentOutput
-	};
-
-	const std::array waitValues = {
-		timelineValue,
-		timelineValue,
-		timelineValue
-	};
-	timelineValue++;
-	const std::array signalValues = {
-		timelineValue,
-		timelineValue
-	};
-
-	const vk::TimelineSemaphoreSubmitInfo timelineSubmit {
-		.waitSemaphoreValueCount = static_cast<uint32_t>(waitSemaphores.size()),
-		.pWaitSemaphoreValues = waitValues.data(),
-		.signalSemaphoreValueCount = static_cast<uint32_t>(signalSemaphores.size()),
-		.pSignalSemaphoreValues = signalValues.data()
+	constexpr std::array waitStages = {
+		static_cast<vk::PipelineStageFlags>(vk::PipelineStageFlagBits::eColorAttachmentOutput)
 	};
 
 	const vk::SubmitInfo submit {
-		.pNext = &timelineSubmit,
 		.waitSemaphoreCount = static_cast<uint32_t>(waitSemaphores.size()),
 		.pWaitSemaphores = waitSemaphores.data(),
 		.pWaitDstStageMask = waitStages.data(),
@@ -162,7 +139,7 @@ void VDisplay::drawFrame(const SyncObjs& sync, const Image& img) {
 		.pSignalSemaphores = signalSemaphores.data()
 	};
 
-	vDev->submit(vDev->graphicsQueueFamilyIndex,submit, sync.renderFinishedFence);
+	vDev->submit(vDev->graphicsIndex,submit, renderFinishedFence);
 }
 
 bool VDisplay::present(const SyncObjs& sync, const uint32_t& imageIndex) {
@@ -178,39 +155,49 @@ bool VDisplay::present(const SyncObjs& sync, const uint32_t& imageIndex) {
 		.pSwapchains = &*swapchain,
 		.pImageIndices = &imageIndex
 	};
-	const auto presentRes = vDev->present(vDev->graphicsQueueFamilyIndex, present);
-	if (presentRes == vk::Result::eSuccess)
+	switch (const auto presentRes = vDev->present(vDev->graphicsIndex, present)) {
+	case vk::Result::eSuccess:
 		return true;
-	if (presentRes == vk::Result::eErrorOutOfDateKHR ) {
+	case vk::Result::eErrorOutOfDateKHR: {
 		MWARN << name << " Swapchain out of date" << endl;
 		std::lock_guard lock(stateMutex);
 		if (state < eError) {
 			state = eSwapOutOfDate;
 			stateCond.notify_all();
 		}
-		waitFence(sync.renderFinishedFence);
-		const vk::ReleaseSwapchainImagesInfoEXT releaseInfo {
-			.swapchain = swapchain,
-			.imageIndexCount = 1,
-			.pImageIndices = &imageIndex
+		waitFence<false>(renderFinishedFence);
+		const vk::ReleaseSwapchainImagesInfoEXT releaseInfo{
+				.swapchain = swapchain,
+				.imageIndexCount = 1,
+				.pImageIndices = &imageIndex
 		};
 		vDev->dev.releaseSwapchainImagesEXT(releaseInfo);
 		return false;
+	} case vk::Result::eSuboptimalKHR: {
+		MDEBUG << name << " Swapchain sub optimal" << endl;
+		std::lock_guard lock(stateMutex);
+		if (state < eError) {
+			state = eSwapOutOfDate;
+			stateCond.notify_all();
+		}
+		return true;
+	} default: {
+		MERROR << name << " Failed to present swapchain image: " << to_str(presentRes) << endl;
+		std::lock_guard lock(stateMutex);
+		if (state < eError) {
+			state = eError;
+			stateCond.notify_all();
+		}
+		return false;
 	}
-	MERROR << name << " Failed to present swapchain image: " << to_str(presentRes) << endl;
-	std::lock_guard lock(stateMutex);
-	if (state < eError) {
-		state = eError;
-		stateCond.notify_all();
 	}
-	return false;
 }
 
 
 void VDisplay::renderLoop() {
 	const auto syncIndex = getSyncObj();
 	const auto& sync = syncObjs[syncIndex];
-	constexpr uint64_t timeout = 5e9;
+	constexpr uint64_t timeout = std::numeric_limits<uint64_t>::max();
 	auto [result, imageIndex] = swapchain.acquireNextImage(timeout, sync.imageAvailable, nullptr);
 	switch (result) {
 	case vk::Result::eSuccess:
@@ -258,9 +245,19 @@ void VDisplay::renderLoop() {
 		return;
 	const auto& img = images[imageIndex];
 	//transferBackground(sync, img);
+	waitFence(renderFinishedFence);
+	if (renderedNormally)
+		readyDisplays++;
+	renderedNormally = renderSemaphore.try_acquire_until(nextFrameTime);
+	nextFrameTime = std::chrono::steady_clock::now() + maxTimeBetweenFrames.load();
 	drawFrame(sync, img);
-	if (present(sync, imageIndex))
-		busySyncObjs[imageIndex] = syncIndex;
+	if (!present(sync, imageIndex)){
+		renderedNormally = false;
+		renderSemaphore.release();
+		return;
+	}
+	busySyncObjs[imageIndex] = syncIndex;
+	framesRendered++;
 }
 
 bool VDisplay::step() {
@@ -273,12 +270,12 @@ bool VDisplay::step() {
 		return true;
 	case eSwapOutOfDate:
 		for (const auto& val : busySyncObjs | std::views::values) {
-			waitSync(syncObjs[val]);
+			waitFence(syncObjs[val].presented);
 			freeSyncObjs.push(val);
 		}
 		busySyncObjs.clear();
 		createSwapchain();
-		createFramebuffers();
+			createFrameBuffers();
 		{
 			std::lock_guard lock(stateMutex);
 			if (state < eError) {

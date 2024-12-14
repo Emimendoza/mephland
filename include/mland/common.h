@@ -133,6 +133,12 @@ using VDisplay = Backend::VDisplay;
 using VDevice = Backend::VDevice;
 using VInstance = Backend::VInstance;
 struct VShader;
+struct VTexture;
+
+class VSurface;
+class VSurfaceHost;
+class VSurfaceDevice;
+
 class Controller;
 class WLServer;
 struct MState;

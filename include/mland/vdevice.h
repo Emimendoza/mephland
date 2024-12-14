@@ -7,7 +7,7 @@
 namespace mland {
 class Backend::VDevice {
 public:
-	enum struct id_t : int64_t { INVALID = -1 };
+	enum struct Id_t : int64_t { INVALID = -1 };
 protected:
 	VDevice(vkr::PhysicalDevice&& physicalDevice, const vec<cstr>& extensions, VInstance* parent);
 	struct Queue {
@@ -29,12 +29,12 @@ protected:
 public:
 	MCLASS(VDevice);
 
-	friend std::ostream& operator<<(std::ostream& os, const id_t& id) { return os << static_cast<int64_t>(id); }
+	friend std::ostream& operator<<(std::ostream& os, const Id_t& i) { return os << static_cast<int64_t>(i); }
 
-	const id_t id{};
+	const Id_t id{};
 	const str name{};
-	const uint32_t graphicsQueueFamilyIndex{0};
-	const uint32_t transferQueueFamilyIndex{0};
+	const uint32_t graphicsIndex{0};
+	const uint32_t transferIndex{0};
 	const bool good;
 	VDevice(const VDevice&) = delete;
 	VDevice(VDevice&&) = delete;

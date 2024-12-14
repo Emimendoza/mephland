@@ -285,9 +285,10 @@ void DrmBackend::DrmVDisplay::createSurface(const uint32_t mode_index) {
 	auto res = instance.createDisplayPlaneSurfaceKHR(surfaceCreateInfo);
 	if (!res.has_value()) [[unlikely]]
 		throw std::runtime_error(name + " Failed to create surface: " + to_str(res.error()));
-	assert(static_cast<DrmVDevice&>(*vDev).pDev.getSurfaceSupportKHR(vDev->graphicsQueueFamilyIndex, res.value()));
+	assert(static_cast<DrmVDevice&>(*vDev).pDev.getSurfaceSupportKHR(vDev->graphicsIndex, res.value()));
 	vkrSurface = std::move(res.value());
 	surface = vkrSurface;
+	refreshRate = parameters.refreshRate;
 }
 
 void DrmBackend::DrmVDisplay::deleteSurface() {
@@ -297,5 +298,7 @@ void DrmBackend::DrmVDisplay::deleteSurface() {
 
 
 void DrmBackend::DrmVDisplay::createSurface() {
+	std::lock_guard lock(modeMutex);
 	createSurface(createModes());
+	preferredMode = true;
 }

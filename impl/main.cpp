@@ -21,7 +21,6 @@ int main() {
 	set_log_level();
 	MINFO << "Starting MephLand Compositor" << endl;
 	u_ptr<Backend> backend;
-	s_ptr server = std::make_shared<WLServer>();
 
 	const bool validation_layers = get_validation_layers();
 	try {
@@ -30,12 +29,12 @@ int main() {
 	} catch (const std::exception& e) {
 		MERROR << "Failed to create backend: " << e.what() << endl;
 		MINFO << "Falling back to SDL backend" << endl;
-		backend = std::make_unique<SdlBackend>(1, server);
+		backend = std::make_unique<SdlBackend>(2);
 	}
 
 	u_ptr instance = backend->createInstance(validation_layers);
-	Controller controller(std::move(instance), server);
-	controller.run();
+	Controller::create(std::move(instance));
+	Controller::run();
 	return  0;
 }
 

@@ -1,5 +1,6 @@
 #pragma once
 #include <condition_variable>
+#include <semaphore>
 #include <thread>
 #include <stack>
 #include "common.h"
@@ -43,7 +44,8 @@ public:
 	typedef std::pair<vec<vk::SurfaceFormatKHR>, vec<vk::PresentModeKHR>> SurfaceInfo;
 	SurfaceInfo getSurfaceInfo() const;
 	static vk::SurfaceFormatKHR bestFormat(const vec<vk::SurfaceFormatKHR>& formatPool, bool HDR);
-	static void requestRender();
+
+
 
 	std::condition_variable stateCond{};
 	bool isGood();
@@ -52,15 +54,18 @@ public:
 	void bindToWayland(const WLServer& server);
 
 protected:
+	friend Controller;
+	static void setMaxTimeBetweenFrames(std::chrono::milliseconds time);
+	static void requestRender();
+
 	friend interfaces::Output;
 	friend VDevice;
 	VDisplay(str&& name, VDevice* vDev) : name(std::move(name)), vDev(vDev) {}
-	// <Rendered, Signal, Device>
-	typedef std::tuple<vkr::Semaphore, vkr::Semaphore, VDevice*> DisplaySemaphore;
-	typedef s_ptr<DisplaySemaphore> SharedDisplaySemaphore;
-	typedef vec<SharedDisplaySemaphore> DisplaySemaphores;
-	static std::mutex timelineMutex;
-	static s_ptr<DisplaySemaphores> timelineSemaphores;
+
+	static std::atomic<std::chrono::milliseconds> maxTimeBetweenFrames;
+	static std::atomic<uint8_t> readyDisplays;
+	static std::counting_semaphore<std::numeric_limits<uint8_t>::max()> renderSemaphore;
+
 	struct Image {
 		vk::Image image;
 		vkr::ImageView view{nullptr};
@@ -75,19 +80,24 @@ protected:
 		vkr::Semaphore imageAvailable;
 		vkr::Semaphore backgroundFinished;
 		vkr::Semaphore renderFinished;
-		vkr::Fence renderFinishedFence;
 		vkr::Fence presented;
 		SyncObjs(const VDisplay& us);
 		SyncObjs(SyncObjs&&) = default;
 		~SyncObjs() = default;
 	};
 
+	// Meta info (used for logging and for wayland)
 	str name;
+	str make = "Unknown";
+	str model = "Unknown";
 	VkExtent2D size{};
+
+	// State
 	State state{ePreInit};
 	std::mutex stateMutex{};
 
-	std::chrono::time_point<std::chrono::system_clock> startTime{};
+	uint64_t framesRendered{0};
+	std::chrono::time_point<std::chrono::steady_clock> nextFrameTime{};
 	// Assets
 	vkr::Image background{nullptr};
 	vkr::Semaphore backgroundSemaphore{nullptr};
@@ -110,19 +120,24 @@ protected:
 	vkr::RenderPass renderPass{nullptr};
 	vkr::Pipeline pipeline{nullptr};
 	// Sync objects
-	SharedDisplaySemaphore timelineSemaphore;
-	uint64_t timelineValue{0};
+	vkr::Fence renderFinishedFence{nullptr};
 	std::thread thread{};
 	vec<SyncObjs> syncObjs{};
 	vkr::CommandPool graphicsPool{nullptr};
 	vkr::CommandPool transferPool{nullptr};
 	std::stack<uint32_t> freeSyncObjs{};
 	map<uint32_t, uint32_t> busySyncObjs{};
+
+	// Wayland stuff
 	u_ptr<interfaces::Output> output;
+	std::mutex modeMutex{};
+	int32_t refreshRate{0};
+	bool preferredMode{true};
+	bool renderedNormally{true};
 
 
 	void createEverything();
-	void createTimeLineSemaphores();
+
 	void createCommandPools();
 	virtual void createSurface() = 0;
 	void createSwapchain();
@@ -130,7 +145,7 @@ protected:
 	void createPipelineLayout();
 	void createRenderPass();
 	void createRenderPipeline();
-	void createFramebuffers();
+	void createFrameBuffers();
 
 	// Defined in interfaces::Output
 	void updateOutput();
@@ -143,22 +158,22 @@ protected:
 	virtual void deleteSurface() = 0;
 	void cleanup();
 
-	void requestRenderForUs();
-
 	// Within renderLoop
 	void transferBackground(const SyncObjs& sync, const Image& img);
 	void drawFrame(const SyncObjs& sync, const Image& img);
 	bool present(const SyncObjs& sync, const uint32_t& imageIndex);
 
 	uint32_t getSyncObj();
+
+	template<bool reset = true>
 	bool waitFence(const vkr::Fence& fence);
 	State getState();
 
 	// Helpers
 	vkr::Semaphore createSem() const;
+	template<bool signaled = false>
 	vkr::Fence createFence() const;
 	bool waitImage(uint32_t imageIndex);
-	bool waitSync(const SyncObjs& sync);
 
 };
 }

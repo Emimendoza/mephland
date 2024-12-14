@@ -12,7 +12,7 @@ namespace mland {
 class SdlBackend final : public Backend {
 public:
 	MCLASS(SdlBackend);
-	SdlBackend(uint32_t maxWindows, const s_ptr<WLServer>& server);
+	SdlBackend(uint32_t maxWindows);
 	~SdlBackend() override;
 	class SdlVInstance;
 	class SdlVDevice;
@@ -27,7 +27,6 @@ public:
 private:
 	void run();
 	vec<SDL_Window*> windows{};
-	s_ptr<WLServer> server{};
 	std::thread thread{};
 	std::atomic_flag stop = ATOMIC_FLAG_INIT;
 };

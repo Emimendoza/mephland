@@ -3,48 +3,46 @@
 #include "mland/controller.h"
 #include "mland/vinstance.h"
 #include "mland/vdisplay.h"
-#include "mland/vulk.h"
 #include "mland/wayland_server.h"
-#include "mland/interfaces/output.h"
+#include "mland/interfaces/compositor.h"
 using namespace mland;
 
-
-struct Controller::impl {
-	s_ptr<WLServer> server;
-	u_ptr<VInstance> instance;
-	vec<s_ptr<VDisplay>> displays{};
-
-	impl(u_ptr<VInstance>&& instance, const s_ptr<WLServer>& server) : server(server), instance(std::move(instance)){}
-};
-
-Controller::Controller(u_ptr<VInstance>&& instance, const s_ptr<WLServer>& server) {
-	p = std::make_unique<impl>(std::move(instance), server);
-	MDEBUG << "Controller created" << endl;
+namespace {
+std::mutex displayMutex{};
+vec<s_ptr<VDisplay>> displays{};
+u_ptr<WLServer> server{};
+u_ptr<VInstance> instance;
 }
 
-Controller::~Controller() {
-	p.reset();
-	MDEBUG << "Controller destroyed" << endl;
+void Controller::create(u_ptr<VInstance>&& instance_) {
+	MDEBUG << "Controller created" << endl;
+	displays.clear();
+	instance = std::move(instance_);
+	server = std::make_unique<WLServer>();
 }
 
 void Controller::refreshMonitors() {
 	MDEBUG << "Refreshing monitors" << endl;
-	vec<s_ptr<VDisplay>> newDisplays;
-	for (const auto& display : p->displays ) {
-		if (display->isGood())
-			newDisplays.push_back(display);
+	{
+		std::lock_guard lock(displayMutex);
+		vec<s_ptr<VDisplay>> newDisplays;
+		for (const auto &display: displays) {
+			if (display->isGood())
+				newDisplays.push_back(display);
+		}
+		displays = std::move(newDisplays);
 	}
-	p->displays = std::move(newDisplays);
 
 
-	for (const auto& dev : p->instance->refreshDevices()) {
-		auto& device = p->instance->getDevice(dev);
+	for (const auto& dev : instance->refreshDevices()) {
+		auto& device = instance->getDevice(dev);
 		auto monitors = device.updateMonitors();
 		for (auto& monitor : monitors) {
 			if (!monitor->isGood())
 				continue;
-			monitor->bindToWayland(*p->server);
-			p->displays.push_back(monitor);
+			monitor->bindToWayland(*server);
+			std::lock_guard lock(displayMutex);
+			displays.push_back(monitor);
 		}
 	}
 }
@@ -66,17 +64,34 @@ static void signalHandler(int signal) {
 
 void Controller::run() {
 	MDEBUG << "Running controller" << endl;
-	pServer = p->server.get();
+	pServer = server.get();
 	signal(SIGINT, signalHandler);
 	signal(SIGTERM, signalHandler);
 
+	interfaces::Compositor compositor(server->getDisplay());
+
 	refreshMonitors();
+	VDisplay::setMaxTimeBetweenFrames(std::chrono::milliseconds(50));
 	MDEBUG << "Starting server" << endl;
-	while (!p->server->stopped_.test()) {
-		VDisplay::requestRender();
+	while (!server->stopped_.test()) {
 		std::this_thread::sleep_for(std::chrono::milliseconds(100));
 	}
-	p->server->waitForStop();
+	server->waitForStop();
 }
 
+void Controller::requestRender() {
+	MDEBUG << "Requesting render" << endl;
+	VDisplay::requestRender();
+}
 
+void Controller::stop() {
+	MDEBUG << "Stopping controller" << endl;
+	while(!instance) {
+		std::this_thread::sleep_for(std::chrono::milliseconds(100));
+	}
+
+	server->stop();
+	std::lock_guard lock(displayMutex);
+	displays.clear();
+	server->waitForStop();
+}

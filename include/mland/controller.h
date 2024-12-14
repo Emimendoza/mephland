@@ -3,20 +3,20 @@
 #include "common.h"
 
 namespace mland {
-class Controller {
-	struct impl;
-	u_ptr<impl> p;
 
+// Special singleton class that controls the entire compositor
+class Controller {
 public:
 	MCLASS(Controller);
-	Controller(u_ptr<VInstance>&& instance, const s_ptr<WLServer>& server);
-	Controller(Controller&& other) noexcept = default;
-	Controller(const Controller&) = delete;
-	~Controller();
 
-	void run();
+
+	static void create(u_ptr<VInstance>&& instance_);
+	static void run();
+	static void stop();
+	static void refreshMonitors();
+	static void requestRender();
 
 private:
-	void refreshMonitors();
+	Controller() = delete;
 };
 }

@@ -31,7 +31,7 @@ void VDisplay::stop() {
 	stateCond.wait(lock, [this] {
 		if (state == eStopped)
 			return true;
-		requestRenderForUs();
+		requestRender();
 		return false;
 	});
 	thread.join();
@@ -81,14 +81,14 @@ vk::SurfaceFormatKHR VDisplay::bestFormat(const vec<vk::SurfaceFormatKHR> &forma
 }
 
 void VDisplay::createEverything() {
-	createTimeLineSemaphores();
+	renderFinishedFence = createFence<true>();
 	createCommandPools();
 	createSurface();
 	createSwapchain();
 	createPipelineLayout();
 	createRenderPass();
 	createRenderPipeline();
-	createFramebuffers();
+	createFrameBuffers();
 }
 
 void VDisplay::createSwapchain() {
@@ -97,32 +97,13 @@ void VDisplay::createSwapchain() {
 	auto presentMode = presentModes[0];
 	for (const auto& mode : presentModes) {
 		if (mode == vk::PresentModeKHR::eMailbox) {
-			MDEBUG << name << " Using mailbox present mode" << endl;
+			MINFO << name << " Using mailbox present mode" << endl;
 			presentMode = vk::PresentModeKHR::eMailbox;
 			break;
 		}
 	}
 	createSwapchain(presentMode, bestFormat(format, renderingMode & eHDR));
 	updateOutput();
-}
-
-void VDisplay::createTimeLineSemaphores() {
-	static constexpr vk::SemaphoreTypeCreateInfo semType {
-		.semaphoreType = vk::SemaphoreType::eTimeline,
-		.initialValue = 0
-	};
-	static constexpr vk::SemaphoreCreateInfo semInfo {
-		.pNext = &semType
-	};
-	auto res = vDev->dev.createSemaphore(semInfo);
-	auto res2 = vDev->dev.createSemaphore(semInfo);
-	if (!res.has_value() || !res2.has_value()) [[unlikely]]
-		throw std::runtime_error(name + " Failed to create timeline semaphore: " + to_str(res.error()));
-	timelineSemaphore = std::make_shared<DisplaySemaphore>(std::move(res.value()),std::move(res2.value()), vDev);
-	std::lock_guard lock(timelineMutex);
-	const s_ptr newSemaphores = std::make_shared<DisplaySemaphores>(*timelineSemaphores);
-	newSemaphores->emplace_back(timelineSemaphore);
-	timelineSemaphores = newSemaphores;
 }
 
 void VDisplay::createSwapchain(const vk::PresentModeKHR presentMode, const vk::SurfaceFormatKHR format) {
@@ -313,7 +294,7 @@ void VDisplay::createRenderPipeline() {
 	pipeline = std::move(res.value());
 }
 
-void VDisplay::createFramebuffers() {
+void VDisplay::createFrameBuffers() {
 	MDEBUG << name << " Creating framebuffers"<< endl;
 	images.clear();
 	for (const auto& image : swapchain.getImages()) {
@@ -323,8 +304,8 @@ void VDisplay::createFramebuffers() {
 
 void VDisplay::createCommandPools() {
 	MDEBUG << name << " Creating command pools" << endl;
-	graphicsPool = vDev->createCommandPool(vDev->graphicsQueueFamilyIndex);
-	transferPool = vDev->createCommandPool(vDev->transferQueueFamilyIndex);
+	graphicsPool = vDev->createCommandPool(vDev->graphicsIndex);
+	transferPool = vDev->createCommandPool(vDev->transferIndex);
 }
 
 bool VDisplay::isGood() {
@@ -335,44 +316,14 @@ bool VDisplay::isGood() {
 }
 
 void VDisplay::cleanup() {
-	s_ptr<DisplaySemaphores> oldSemaphores;
-	{
-		std::lock_guard lock(timelineMutex);
-		oldSemaphores = timelineSemaphores;
-		const s_ptr newSemaphores = std::make_shared<DisplaySemaphores>();
-		for (const auto& sem : *timelineSemaphores) {
-			if (sem != timelineSemaphore) {
-				newSemaphores->push_back(sem);
-			}
-		}
-		timelineSemaphores = newSemaphores;
-	}
-	while (oldSemaphores.use_count() > 1) {
-		// waiting for other threads to stop using our semaphore
-		std::this_thread::yield();
-	}
-	oldSemaphores.reset();
-	while (timelineSemaphore.use_count() > 1) {
-		std::this_thread::yield();
-	}
+	output.reset();
 	for (const auto& val : busySyncObjs | std::views::values) {
-		const std:: array fences = {
-			*syncObjs[val].renderFinishedFence,
-			*syncObjs[val].presented
-		};
-		while (true) {
-			constexpr uint64_t waitTime = 1e8;
-			const auto res = vDev->dev.waitForFences(fences, true, waitTime);
-			if (res == vk::Result::eSuccess) {
-				break;
-			}
-			requestRenderForUs();
-		}
+		const auto& sync = syncObjs[val];
+		waitFence(sync.presented);
 	}
 
 	syncObjs.clear();
 	images.clear();
-	timelineSemaphore.reset();
 	pipeline.clear();
 	renderPass.clear();
 	pipelineLayout.clear();
@@ -388,31 +339,13 @@ VDisplay::State VDisplay::getState() {
 }
 
 void VDisplay::requestRender() {
-	volatile auto semaphores = timelineSemaphores;
-	for (const auto& sem : *const_cast<s_ptr<DisplaySemaphores>&>(semaphores)) {
-		const auto& [renderedSem, signalSem, device] = *sem;
-		if (renderedSem.getCounterValue() == signalSem.getCounterValue()) {
-			continue;
-		}
-		const vk::SemaphoreSignalInfo signalInfo {
-			.semaphore = signalSem,
-			.value = renderedSem.getCounterValue()
-		};
-		device->dev.signalSemaphore(signalInfo);
-	}
+	renderSemaphore.release(readyDisplays.exchange(0));
 }
 
-void VDisplay::requestRenderForUs() {
-	const auto& [renderedSem, signalSem, device] = *timelineSemaphore;
-	if (renderedSem.getCounterValue() == signalSem.getCounterValue()) {
-		return;
-	}
-	const vk::SemaphoreSignalInfo signalInfo {
-		.semaphore = signalSem,
-		.value = renderedSem.getCounterValue()
-	};
-	device->dev.signalSemaphore(signalInfo);
+void VDisplay::setMaxTimeBetweenFrames(std::chrono::milliseconds time) {
+	maxTimeBetweenFrames.store(time);
 }
 
-std::mutex VDisplay::timelineMutex{};
-s_ptr<VDisplay::DisplaySemaphores> VDisplay::timelineSemaphores = std::make_shared<DisplaySemaphores>();
+std::atomic<uint8_t> VDisplay::readyDisplays = 0;
+std::counting_semaphore<std::numeric_limits<uint8_t>::max()> VDisplay::renderSemaphore{0};
+std::atomic<std::chrono::milliseconds> VDisplay::maxTimeBetweenFrames{std::chrono::milliseconds(500)};

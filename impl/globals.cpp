@@ -1,5 +1,4 @@
-#include "mland/globals.h"
-#include "mland/drm_backend.h"
+#include "mland/common.h"
 #include "mland/mstate.h"
 using namespace mland;
 

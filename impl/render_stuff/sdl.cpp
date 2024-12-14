@@ -4,12 +4,13 @@
 #include <SDL3/SDL_events.h>
 #include "mland/sdl_backend.h"
 #include "mland/wayland_server.h"
+#include "mland/controller.h"
 using namespace mland;
 using SdlVInstance = SdlBackend::SdlVInstance;
 using SdlDevice = SdlBackend::SdlVDevice;
 using SdlDisplay = SdlBackend::SdlVDisplay;
 
-SdlBackend::SdlBackend(const uint32_t maxWindows, const s_ptr<WLServer>& server) : server(server) {
+SdlBackend::SdlBackend(const uint32_t maxWindows) {
 	MDEBUG << "Creating SDL Backend" << endl;
 	static constexpr auto  windowName = "MephLand Compositor";
 	static constexpr auto  windowWidth = 800;
@@ -35,10 +36,17 @@ void SdlBackend::run() {
 	while (!stop.test()) {
 		SDL_Event event;
 		while (SDL_PollEvent(&event)) {
-			if (event.type == SDL_EVENT_QUIT || event.type == SDL_EVENT_WINDOW_CLOSE_REQUESTED) {
+			switch (event.type) {
+			case SDL_EVENT_QUIT:
+			case SDL_EVENT_WINDOW_CLOSE_REQUESTED:
 				MINFO << "Received quit event" << endl;
-				server->stop();
+				stop.test_and_set();
+				Controller::stop();
 				return;
+			case SDL_EVENT_WINDOW_RESIZED:
+				MINFO << "Window resized" << endl;
+				Controller::requestRender();
+				break;
 			}
 		}
 		std::this_thread::sleep_for(std::chrono::milliseconds(100));

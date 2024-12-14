@@ -9,10 +9,10 @@ public:
 	VInstance(const VInstance&) = delete;
 	VInstance(VInstance&&) = delete;
 
-	vec<VDevice::id_t> refreshDevices();
+	vec<VDevice::Id_t> refreshDevices();
 	virtual bool deviceGood(const vkr::PhysicalDevice& pDev) = 0;
 
-	constexpr VDevice& getDevice(const VDevice::id_t& id) { return *devices.at(id); }
+	constexpr VDevice& getDevice(const VDevice::Id_t& id) { return *devices.at(id); }
 	constexpr vkr::Instance& getInstance() { return instance; }
 	constexpr Backend* getBackend() { return backend; }
 
@@ -24,6 +24,6 @@ protected:
 	Backend* backend;
 	vkr::Instance instance{nullptr};
 	vkr::DebugUtilsMessengerEXT debugMessenger{nullptr};
-	map<VDevice::id_t, u_ptr<VDevice>> devices{};
+	map<VDevice::Id_t, u_ptr<VDevice>> devices{};
 };
 }

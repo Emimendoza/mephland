@@ -54,61 +54,29 @@ vkr::Semaphore VDisplay::createSem() const {
 	return std::move(semRes.value());
 }
 
+template<bool signaled>
 vkr::Fence VDisplay::createFence() const {
-	static constexpr vk::FenceCreateInfo fenceInfo{};
+	static constexpr vk::FenceCreateInfo fenceInfo{
+		.flags = signaled ? vk::FenceCreateFlagBits::eSignaled : vk::FenceCreateFlagBits{}
+	};
 	auto fenceRes = vDev->dev.createFence(fenceInfo);
 	if (!fenceRes.has_value()) [[unlikely]]
 		throw std::runtime_error(name + " Failed to create fence: " + to_str(fenceRes.error()));
 	return std::move(fenceRes.value());
 }
-
-bool VDisplay::waitSync(const SyncObjs& sync) {
-	const std::array fences = {
-		*sync.renderFinishedFence,
-		*sync.presented
-	};
-	size_t count = 0;
-	while (count < 10) {
-		constexpr uint64_t timeout = 1e9;
-		switch (const auto result = vDev->dev.waitForFences(fences, true, timeout)) {
-		case vk::Result::eSuccess:
-			vDev->dev.resetFences(fences);
-			return true;
-		case vk::Result::eTimeout:
-			MDEBUG << name << " Timed out waiting for fences" << endl;
-			requestRenderForUs();
-			break;
-		default:
-			MERROR << name << " Failed to wait for fences: " << to_str(result) << endl;
-			std::lock_guard lock(stateMutex);
-			if (state < eError) {
-				state = eError;
-				stateCond.notify_all();
-			}
-			return false;
-		}
-		count++;
-	}
-	MERROR << name << " Waiting for fences too long" << endl;
-	std::lock_guard lock(stateMutex);
-	if (state < eError) {
-		state = eError;
-		stateCond.notify_all();
-	}
-	return false;
-
-}
+template vkr::Fence VDisplay::createFence<true>() const;
+template vkr::Fence VDisplay::createFence<false>() const;
 
 bool VDisplay::waitImage(const uint32_t imageIndex) {
 	if (!busySyncObjs.contains(imageIndex)) {
 		return true;
 	}
-	const auto syncIndexRn = busySyncObjs[imageIndex];
-	const auto& syncRn = syncObjs[syncIndexRn];
-	if (!waitSync(syncRn)) {
+	const auto syncIndex = busySyncObjs[imageIndex];
+	const auto& sync = syncObjs[syncIndex];
+	if (!waitFence(sync.presented)) {
 		return false;
 	}
-	freeSyncObjs.push(syncIndexRn);
+	freeSyncObjs.push(syncIndex);
 	busySyncObjs.erase(imageIndex);
 	return true;
 }
@@ -117,7 +85,6 @@ VDisplay::SyncObjs::SyncObjs(const VDisplay& us) :
 imageAvailable(us.createSem()),
 backgroundFinished(us.createSem()),
 renderFinished(us.createSem()),
-renderFinishedFence(us.createFence()),
 presented(us.createFence()) {}
 
 VDisplay::Image::~Image() {
@@ -136,21 +103,14 @@ uint32_t VDisplay::getSyncObj() {
 	return syncObjs.size() - 1;
 }
 
+template<bool reset>
 bool VDisplay::waitFence(const vkr::Fence& fence) {
-	// Refresh at least once every 2 seconds
-	//constexpr uint64_t waitTime = std::numeric_limits<uint64_t>::max();
-	size_t count = 0;
-	do {
-		count++;
-		constexpr uint64_t waitTime = 2e8;
-		switch (const auto res = vDev->dev.waitForFences(*fence, true, waitTime)) {
+	static constexpr uint64_t waitTime = std::numeric_limits<uint64_t>::max();
+	switch (const auto res = vDev->dev.waitForFences(*fence, true, waitTime)) {
 		case vk::Result::eSuccess:
-			vDev->dev.resetFences(*fence);
+			if constexpr (reset)
+				vDev->dev.resetFences(*fence);
 			return true;
-		case vk::Result::eTimeout:
-			MDEBUG << name << " Timed out waiting for fence" << endl;
-			requestRenderForUs();
-			break;
 		default:
 			MERROR << name << " Failed to wait for fence: " << to_str(res) << endl;
 			std::lock_guard lock(stateMutex);
@@ -159,15 +119,8 @@ bool VDisplay::waitFence(const vkr::Fence& fence) {
 				stateCond.notify_all();
 			}
 			return false;
-		}
-		if (count > 10){
-			MWARN << name << " Waiting for fence too long" << endl;
-			std::lock_guard lock(stateMutex);
-			if (state < eError) {
-				state = eError;
-				stateCond.notify_all();
-			}
-			return false;
-		}
-	} while (true);
+	}
 }
+
+template bool VDisplay::waitFence<true>(const vkr::Fence&);
+template bool VDisplay::waitFence<false>(const vkr::Fence&);

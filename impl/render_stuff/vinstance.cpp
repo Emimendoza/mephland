@@ -102,9 +102,9 @@ VInstance::VInstance(const bool enableValidationLayers, Backend& backend): backe
 	}
 }
 
-vec<VDevice::id_t> VInstance::refreshDevices() {
+vec<VDevice::Id_t> VInstance::refreshDevices() {
 	MDEBUG << "Reloading devices" << endl;
-	vec<VDevice::id_t> ret;
+	vec<VDevice::Id_t> ret;
 	vec<cstr> deviceExtensions {
 		vk::KHRSwapchainExtensionName,
 		vk::EXTSwapchainMaintenance1ExtensionName
@@ -123,7 +123,7 @@ vec<VDevice::id_t> VInstance::refreshDevices() {
 
 	for (auto& pDev : res.value()) {
 		str name = pDev.getProperties().deviceName.data();
-		auto id = static_cast<VDevice::id_t>(pDev.getProperties().deviceID);
+		auto id = static_cast<VDevice::Id_t>(pDev.getProperties().deviceID);
 		if (devices.contains(id)) {
 			MDEBUG << "Device " << name << " already exists" << endl;
 			continue;

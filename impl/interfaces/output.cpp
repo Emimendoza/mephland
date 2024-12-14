@@ -15,53 +15,50 @@ void VDisplay::updateOutput() {
 	if (!output)
 		return;
 	MDEBUG << name << " Updating output" << endl;
-	for (const auto& display : output->clientOutputs | std::views::keys) {
+	std::lock_guard lock(extentMutex);
+	for (const auto& display : output->clients | std::views::keys) {
 		output->updateEvent(*display);
 		Output::doneEvent(*display);
 	}
 }
 
-Output::Output(wl_display* wlDisplay, VDisplay& display) : display(display){
-	global = wl_global_create(wlDisplay, &wl_output_interface, 1, this, &bind);
-}
+Output::Output(wl_display* wlDisplay, VDisplay& display) :
+	WLInterface(wlDisplay, &WLOutputImplementation, &wl_output_interface, 4),
+	display(display) {
 
-Output::~Output() {
-	if (global == nullptr)
-		return;
-	wl_global_destroy(global);
 }
 
 void Output::release(wl_client* client, wl_resource* resource) {
-	resourceDestroy(resource);
+	wlDestroy(resource);
 }
 
-void Output::updateEvent(const ClientOutput& clientOutput) {
+void Output::updateEvent(const Client& clientOutput) {
 	wl_output_send_geometry(clientOutput.resource, display.extent.width, display.extent.height, display.size.width,
-		display.size.height, subpixel, "unknown", display.name, transform);
+		display.size.height, subpixel, display.make, display.model, transform);
 }
 
-void Output::doneEvent(const ClientOutput& clientOutput) {
+void Output::modeEvent(const Client& clientOutput, const uint32_t flags) const {
+	wl_output_send_mode(clientOutput.resource, flags, display.extent.width, display.extent.height, display.refreshRate);
+}
+
+
+void Output::doneEvent(const Client& clientOutput) {
 	wl_output_send_done(clientOutput.resource);
 }
 
-void Output::resourceDestroy(wl_resource* resource) {
-	auto* client_output = static_cast<ClientOutput*>(wl_resource_get_user_data(resource));
-	MDEBUG << client_output->parent->display.name << " Destroying output" << endl;
+void Output::destroy(wl_resource* resource) {
+	MDEBUG << display.name << " Destroying output" << endl;
 	// TODO: Implement
-	client_output->parent->clientOutputs.erase(client_output);
 }
 
-
-void Output::bind(wl_client* client, void* data, const uint32_t version, const uint32_t id) {
-	auto& us = *static_cast<Output*>(data);
-	auto client_output = std::make_unique<ClientOutput>();
-	client_output->resource = wl_resource_create(client, &wl_output_interface, version, id);
-	client_output->parent = &us;
-	MDEBUG << us.display.name << " Binding output" << endl;
-	wl_resource_set_implementation(client_output->resource, &WLOutputImplementation, client_output.get(), &resourceDestroy);
-
-	us.updateEvent(*client_output);
-	doneEvent(*client_output);
-
-	us.clientOutputs[client_output.get()] = std::move(client_output);
+void Output::bind(wl_client* client, const uint32_t version, const uint32_t id) {
+	MDEBUG << display.name << " Binding output" << endl;
+	const auto& client_output = createClient(client, version, id);
+	std::lock_guard l1(display.modeMutex);
+	std::lock_guard l2(display.extentMutex);
+	const uint32_t flags = 0x1 | (display.preferredMode ? 0x2 : 0);
+	updateEvent(client_output);
+	modeEvent(client_output, flags);
+	wl_output_send_name(client_output.resource, display.name.c_str());
+	doneEvent(client_output);
 }
