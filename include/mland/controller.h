@@ -16,6 +16,8 @@ public:
 	static void refreshMonitors();
 	static void requestRender();
 
+	static void waitForStop();
+
 private:
 	Controller() = delete;
 };

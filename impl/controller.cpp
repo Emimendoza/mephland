@@ -8,7 +8,7 @@
 using namespace mland;
 
 namespace {
-std::mutex displayMutex{};
+std::atomic_flag stopped = ATOMIC_FLAG_INIT;
 vec<s_ptr<VDisplay>> displays{};
 u_ptr<WLServer> server{};
 u_ptr<VInstance> instance;
@@ -24,7 +24,6 @@ void Controller::create(u_ptr<VInstance>&& instance_) {
 void Controller::refreshMonitors() {
 	MDEBUG << "Refreshing monitors" << endl;
 	{
-		std::lock_guard lock(displayMutex);
 		vec<s_ptr<VDisplay>> newDisplays;
 		for (const auto &display: displays) {
 			if (display->isGood())
@@ -41,7 +40,6 @@ void Controller::refreshMonitors() {
 			if (!monitor->isGood())
 				continue;
 			monitor->bindToWayland(*server);
-			std::lock_guard lock(displayMutex);
 			displays.push_back(monitor);
 		}
 	}
@@ -76,7 +74,17 @@ void Controller::run() {
 	while (!server->stopped_.test()) {
 		std::this_thread::sleep_for(std::chrono::milliseconds(100));
 	}
+	displays.clear();
 	server->waitForStop();
+	stopped.test_and_set();
+	stopped.notify_all();
+}
+
+void Controller::waitForStop() {
+	MDEBUG << "Waiting for controller to stop" << endl;
+	bool old = stopped.test();
+	if (!old)
+		stopped.wait(old);
 }
 
 void Controller::requestRender() {
@@ -89,9 +97,6 @@ void Controller::stop() {
 	while(!instance) {
 		std::this_thread::sleep_for(std::chrono::milliseconds(100));
 	}
-
 	server->stop();
-	std::lock_guard lock(displayMutex);
-	displays.clear();
-	server->waitForStop();
+	waitForStop();
 }
