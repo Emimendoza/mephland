@@ -30,4 +30,13 @@ enum log_level : int {
  * @note Default: 0
  */
 constexpr auto USE_VALIDATION_LAYERS = "MLAND_VALIDATION_LAYERS";
+
+/**
+ * The environment variable that specifies the maximum number of windows to create when
+ * using the SDL backend
+ * @note Type: int
+ * @note Default: 1
+ */
+constexpr auto MAX_WINDOWS = "MLAND_SDL_MAX_WINDOWS";
+
 }

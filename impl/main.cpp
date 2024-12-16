@@ -15,6 +15,7 @@ using namespace mland;
 static void set_log_level();
 static DrmBackend::DrmPaths get_drm_paths();
 static bool get_validation_layers();
+static int get_max_windows();
 
 
 int main() {
@@ -29,7 +30,7 @@ int main() {
 	} catch (const std::exception& e) {
 		MERROR << "Failed to create backend: " << e.what() << endl;
 		MINFO << "Falling back to SDL backend" << endl;
-		backend = std::make_unique<SdlBackend>(2);
+		backend = std::make_unique<SdlBackend>(get_max_windows());
 	}
 
 	u_ptr instance = backend->createInstance(validation_layers);
@@ -85,4 +86,11 @@ static bool get_validation_layers() {
 		return std::strtoul(val_env, nullptr, 10);
 	}
 	return false;
+}
+
+static int get_max_windows() {
+	if (const auto max_env = std::getenv(MAX_WINDOWS)) {
+		return std::strtoul(max_env, nullptr, 10);
+	}
+	return 1;
 }
