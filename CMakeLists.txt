@@ -11,7 +11,6 @@ add_compile_options(--embed-dir=${CMAKE_BINARY_DIR}/shaders -Wno-c23-extensions)
 include(CheckIncludeFileCXX)
 
 option(USE_REFLECTION "Use experimental c++ reflection" OFF)
-option(OPTIMIZE "Enable optimizations" OFF)
 option(SDL_BACKEND "Compile with SDL backend" ON)
 
 
@@ -21,10 +20,6 @@ if (USE_REFLECTION)
 		message(FATAL_ERROR "Experimental reflection is not supported by your compiler")
 	endif()
 	add_compile_definitions(MLAND_USE_REFLECTION)
-endif()
-
-if (OPTIMIZE)
-	add_compile_options(-Os)
 endif()
 
 find_package(PkgConfig REQUIRED)
