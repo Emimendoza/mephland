@@ -25,7 +25,28 @@ endif()
 find_package(PkgConfig REQUIRED)
 find_package(Libdrm REQUIRED)
 
-pkg_check_modules(VULKAN REQUIRED vulkan)
+# find Vulkan SDK
+find_package( Vulkan REQUIRED )
+
+# Require Vulkan version ≥ 1.3.256 (earliest version when the Vulkan module was available)
+if( ${Vulkan_VERSION} VERSION_LESS "1.3.256" )
+	message( FATAL_ERROR "Minimum required Vulkan version for C++ modules is 1.3.256. "
+			"Found ${Vulkan_VERSION}."
+	)
+endif()
+
+# set up Vulkan C++ module as a library
+add_library( VulkanHppModule )
+target_sources( VulkanHppModule PUBLIC
+		FILE_SET CXX_MODULES
+		BASE_DIRS ${Vulkan_INCLUDE_DIR}
+		FILES ${Vulkan_INCLUDE_DIR}/vulkan/vulkan.cppm
+)
+target_compile_features( VulkanHppModule PUBLIC cxx_std_20 )
+target_compile_definitions( VulkanHppModule PRIVATE
+)
+target_link_libraries( VulkanHppModule PUBLIC Vulkan::Headers )
+
 pkg_check_modules(WAYLAND_SERVER REQUIRED wayland-server)
 
 if (SDL_BACKEND)
@@ -44,13 +65,12 @@ add_executable(mephland ${SOURCES} ${HEADERS} ${TEMPLATES} ${C_SOURCES})
 
 target_include_directories(mephland PRIVATE
 		include
-		${VULKAN_INCLUDE_DIRS}
 		${Libdrm_INCLUDE_DIRS}
 		${SDL3_INCLUDE_DIRS}
 		${WAYLAND_SERVER_INCLUDE_DIRS}
 )
 target_link_libraries(mephland PRIVATE
-		${VULKAN_LIBRARIES}
+		VulkanHppModule
 		${Libdrm_LIBRARIES}
 		${SDL3_LIBRARIES}
 		${WAYLAND_SERVER_LIBRARIES}
