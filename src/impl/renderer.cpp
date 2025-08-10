@@ -63,7 +63,7 @@ vk::Instance renderer::get_instance() const {
 
 void renderer::impl::create_instance(const bool v) {
 	std::unordered_set<std::string> enabled_layers{};
-	std::unordered_set<std::string> instance_extensions{};
+	std::unordered_set<std::string> instance_extensions{vk::KHRSurfaceExtensionName};
 
 	if (v) {
 		enabled_layers.insert("VK_LAYER_KHRONOS_validation");
@@ -117,7 +117,7 @@ void renderer::impl::create_devices() {
 // Helpers
 
 std::expected<vkr::Device, std::string> renderer::impl::createDevice(const vkr::PhysicalDevice& p) const {
-	static std::unordered_set<std::string> device_extensions{};
+	static std::unordered_set<std::string> device_extensions{vk::KHRSwapchainExtensionName};
 	static std::vector<const char*> de;
 	static bool requirements_initialized = false;
 	if (!requirements_initialized) {
