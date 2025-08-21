@@ -1,5 +1,6 @@
 // ReSharper disable CppMemberFunctionMayBeConst
 #include <mland/renderer.h>
+#include <utility>
 #include <vulkan/vulkan_raii.hpp>
 #include <list>
 #include <expected>
@@ -26,14 +27,54 @@ constexpr vk::ApplicationInfo application_info = {
 	VK_MAKE_VERSION(0, 1, 0),
 	VK_API_VERSION_1_3
 };
+class display_ctx {
+public:
+	display_ctx(display_p&& d) : display{std::move(d)} {}
+private:
+	display_p display;
+	vkr::SwapchainKHR swapchain{nullptr};
+
+	void create_swapchain();
+
+};
+
+struct Device {
+	vkr::PhysicalDevice pdev{nullptr};
+	vkr::Device ldev{nullptr};
+	vkr::Queue queue{nullptr};
+	Device() = delete;
+	Device(const Device&) = delete;
+	Device(Device&&) noexcept;
+	Device(vkr::PhysicalDevice  p, const vk::DeviceCreateInfo&);
+	~Device();
+};
+
 }
+
+Device::Device(vkr::PhysicalDevice  p, const vk::DeviceCreateInfo& create_info) : pdev(std::move(p)) {
+	assert(create_info.queueCreateInfoCount>0);
+	ldev = vkr::Device(pdev, create_info);
+	queue = ldev.getQueue(create_info.pQueueCreateInfos[0].queueFamilyIndex, 0);
+}
+Device::Device(Device&& other) noexcept{
+	std::swap(pdev, other.pdev);
+	std::swap(ldev, other.ldev);
+	std::swap(queue, other.queue);
+}
+
+Device::~Device() {
+	queue.clear();
+	ldev.clear();
+	pdev.clear();
+}
+
 
 struct renderer::impl {
 	shared_backend backend;
 	vkr::Context context{};
 	vkr::Instance instance{nullptr};
-	std::list<vkr::Device> devices;
-	std::list<display_p> displays;
+	std::list<Device> devices;
+	std::list<display_ctx> displays;
 	impl(shared_backend b) : backend(std::move(b)) {}
 	~impl();
 
@@ -43,8 +84,10 @@ struct renderer::impl {
 	// helpers
 private:
 	[[nodiscard]]
-	std::expected<vkr::Device, std::string> createDevice(const vkr::PhysicalDevice& p) const;
+	std::expected<Device, std::string> createDevice(const vkr::PhysicalDevice& p) const;
 };
+
+
 
 renderer::renderer(const shared_backend& backend, const bool validation_layers) : _p(std::make_unique<impl>(backend)) {
 	if (!_p->backend) {
@@ -109,14 +152,14 @@ void renderer::impl::create_instance(const bool v) {
 void renderer::impl::create_devices() {
 	for (const auto& physical_device : instance.enumeratePhysicalDevices()) {
 		if (auto device = createDevice(physical_device)) {
-            devices.emplace_back(std::move(device.value()));
+
         }
 	}
 }
 
 // Helpers
 
-std::expected<vkr::Device, std::string> renderer::impl::createDevice(const vkr::PhysicalDevice& p) const {
+std::expected<Device, std::string> renderer::impl::createDevice(const vkr::PhysicalDevice& p) const {
 	static std::unordered_set<std::string> device_extensions{vk::KHRSwapchainExtensionName};
 	static std::vector<const char*> de;
 	static bool requirements_initialized = false;
@@ -167,7 +210,9 @@ std::expected<vkr::Device, std::string> renderer::impl::createDevice(const vkr::
 		{},
 		de
 	};
-	return vkr::Device(p, create_info);
+
+
+	return Device(p, create_info);
 }
 
 void renderer::refresh_displays() {
@@ -176,7 +221,7 @@ void renderer::refresh_displays() {
         if (!d) {
 	        break; // No more displays can be created
         }
-		_p->displays.push_back(std::move(d.value()));
+		_p->displays.emplace_back(std::move(d.value()));
 	}
 }
 
